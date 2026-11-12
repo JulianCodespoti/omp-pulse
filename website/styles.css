@@ -1,8 +1,22 @@
 /* ==========================================================================
    OMP Pulse — Product Website & Documentation Stylesheet
-   Identity: OLED obsidian (#090a0d), heartbeat violet (#8f76ff), crisp Geist
-   Mono telemetry, hairlines, calm spring transitions, zero SaaS fluff.
+   Identity: OLED obsidian, heartbeat violet, crisp Geist Mono telemetry,
+   hairlines, calm spring transitions, zero SaaS fluff.
+
+   The brand colours, radii and font stacks are not written here: website/build.mjs
+   prepends a generated :root block of --brand-* properties from brand/tokens.json
+   when it copies this file. Everything below uses the short names defined next,
+   which alias those properties. The surfaces and borders are the site's own
+   neutrals and are not brand tokens.
    ========================================================================== */
+
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("assets/fonts/geist-latin.woff2") format("woff2");
+}
 
 @font-face {
   font-family: "Geist Mono";
@@ -13,31 +27,31 @@
 }
 
 :root {
-  --bg: #08090c;
-  --bg-elevated: #0e1015;
+  --bg: var(--brand-ink-950);
+  --bg-elevated: var(--brand-ink-900);
   --surface-1: #12151c;
   --surface-2: #181c25;
   --surface-3: #202633;
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.14);
-  --fg: #f3f4f8;
-  --fg-muted: #9aa2b2;
-  --fg-subtle: #666f82;
-  --accent: #9179ff;
-  --accent-bright: #b19fff;
-  --accent-dim: rgba(145, 121, 255, 0.14);
-  --accent-border: rgba(145, 121, 255, 0.36);
-  --emerald: #34d399;
-  --emerald-dim: rgba(52, 211, 153, 0.13);
-  --amber: #f59e0b;
-  --amber-dim: rgba(245, 158, 11, 0.15);
-  --danger: #f87171;
-  --radius-sm: 8px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-xl: 28px;
-  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --fg: var(--brand-text);
+  --fg-muted: var(--brand-text-muted);
+  --fg-subtle: var(--brand-text-subtle);
+  --accent: var(--brand-violet-500);
+  --accent-bright: var(--brand-violet-300);
+  --accent-dim: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 36%, transparent);
+  --emerald: var(--brand-success);
+  --emerald-dim: color-mix(in srgb, var(--emerald) 13%, transparent);
+  --amber: var(--brand-warning);
+  --amber-dim: color-mix(in srgb, var(--amber) 15%, transparent);
+  --danger: var(--brand-danger);
+  --radius-sm: var(--brand-radius-sm);
+  --radius-md: var(--brand-radius-md);
+  --radius-lg: var(--brand-radius-lg);
+  --radius-xl: var(--brand-radius-xl);
+  --font-sans: var(--brand-font-sans);
+  --font-mono: var(--brand-font-mono);
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
   --max-w: 1200px;
 }
@@ -107,7 +121,7 @@ samp {
   z-index: 999;
   padding: 8px 14px;
   background: var(--accent);
-  color: #08090c;
+  color: var(--bg);
   font-weight: 600;
   border-radius: var(--radius-sm);
 }
@@ -530,15 +544,63 @@ samp {
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.phone-screen img {
+.phone-screen img,
+.phone-screen video {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
+/* The demo loops for longer than five seconds, so it needs a pause control
+   (WCAG 2.2.2). site.js un-hides the button; without script it stays hidden
+   rather than being a control that does nothing. */
+.video-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: color 140ms, border-color 140ms, background 140ms;
+}
+
+.video-toggle[hidden] {
+  display: none;
+}
+
+.video-toggle:hover {
+  color: var(--fg);
+  border-color: var(--accent-border);
+}
+
+.video-toggle:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
+.video-toggle .icon-play,
+.video-toggle[aria-pressed="true"] .icon-pause {
+  display: none;
+}
+
+.video-toggle[aria-pressed="true"] .icon-play {
+  display: block;
+}
+
 .stage-caption {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   margin-top: 14px;
-  text-align: center;
+  text-align: left;
   font-family: var(--font-mono);
   font-size: 0.76rem;
   color: var(--fg-subtle);

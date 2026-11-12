@@ -2,7 +2,7 @@
 // Render the social preview card, docs/media/social-card.png (1280x640):
 //
 //   the app icon, "OMP Pulse", the tagline and footer line on the left, a phone
-//   showing the "Reply ready" screenshot on the right, on the site's dark violet
+//   showing the "Reply ready" screenshot on the right, on the brand's dark violet
 //
 //   node scripts/docs/render-social-card.mjs
 //
@@ -44,36 +44,44 @@ const fonts = {
 };
 const icon = readFileSync(join(ROOT, "web/public/icon.svg"), "utf8").replace(/<\?xml[^>]*\?>/, "").trim();
 
-// Tokens from website/styles.css :root; phone frame from its .phone-device.
+// Colours, font names and the product name come from brand/tokens.json, the
+// same source the website reads, so the card cannot drift from the site. The
+// phone frame is the one in website/styles.css's .phone-device.
+const brand = JSON.parse(readFileSync(join(ROOT, "brand/tokens.json"), "utf8"));
+const rgba = (hex, alpha) => `rgba(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")}, ${alpha})`;
+const [sansFamily] = brand.font.sans;
+const [monoFamily] = brand.font.mono;
+const { violet, ink, text } = brand;
+
 const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <style>
-  @font-face { font-family: "Geist"; src: url("${fonts.sans}") format("woff2"); font-weight: 100 900; }
-  @font-face { font-family: "Geist Mono"; src: url("${fonts.mono}") format("woff2"); font-weight: 100 900; }
+  @font-face { font-family: "${sansFamily}"; src: url("${fonts.sans}") format("woff2"); font-weight: 100 900; }
+  @font-face { font-family: "${monoFamily}"; src: url("${fonts.mono}") format("woff2"); font-weight: 100 900; }
   * { box-sizing: border-box; margin: 0; }
-  html, body { width: ${WIDTH}px; height: ${HEIGHT}px; overflow: hidden; background: #08090c; }
+  html, body { width: ${WIDTH}px; height: ${HEIGHT}px; overflow: hidden; background: ${ink["950"]}; }
   body {
     position: relative;
-    font-family: "Geist", sans-serif;
-    color: #f3f4f8;
+    font-family: "${sansFamily}", sans-serif;
+    color: ${text.default};
     background:
-      radial-gradient(ellipse 560px 520px at 1056px 330px, rgba(145, 121, 255, 0.34), transparent 70%),
-      radial-gradient(ellipse 700px 420px at 0 0, rgba(145, 121, 255, 0.10), transparent 70%),
-      #08090c;
+      radial-gradient(ellipse 560px 520px at 1056px 330px, ${rgba(violet["500"], 0.34)}, transparent 70%),
+      radial-gradient(ellipse 700px 420px at 0 0, ${rgba(violet["500"], 0.1)}, transparent 70%),
+      ${ink["950"]};
   }
   .copy {
     position: absolute;
     left: 72px; top: 64px; bottom: 64px; width: 700px;
     display: flex; flex-direction: column;
   }
-  .icon { width: 96px; height: 96px; display: block; filter: drop-shadow(0 12px 28px rgba(145, 121, 255, 0.32)); }
+  .icon { width: 96px; height: 96px; display: block; filter: drop-shadow(0 12px 28px ${rgba(violet["500"], 0.32)}); }
   .icon svg { width: 100%; height: 100%; display: block; }
   h1 { margin-top: 36px; font-size: 92px; line-height: 1; font-weight: 700; letter-spacing: -3.4px; }
-  .tagline { margin-top: 22px; font-size: 42px; line-height: 1.15; font-weight: 600; letter-spacing: -1px; color: #b19fff; }
-  .sub { margin-top: 26px; width: 620px; font-size: 27px; line-height: 1.4; font-weight: 400; color: #9aa2b2; }
-  .footer { margin-top: auto; font-family: "Geist Mono", monospace; font-size: 20px; letter-spacing: -0.2px; color: #666f82; }
+  .tagline { margin-top: 22px; font-size: 42px; line-height: 1.15; font-weight: 600; letter-spacing: -1px; color: ${violet["300"]}; }
+  .sub { margin-top: 26px; width: 620px; font-size: 27px; line-height: 1.4; font-weight: 400; color: ${text.muted}; }
+  .footer { margin-top: auto; font-family: "${monoFamily}", monospace; font-size: 20px; letter-spacing: -0.2px; color: ${text.subtle}; }
   .phone {
     position: absolute;
     left: 908px; top: 48px;
@@ -84,7 +92,7 @@ const html = `<!doctype html>
     box-shadow:
       0 0 0 1px rgba(255, 255, 255, 0.12),
       0 32px 80px -12px rgba(0, 0, 0, 0.78),
-      0 0 90px -20px rgba(145, 121, 255, 0.24);
+      0 0 90px -20px ${rgba(violet["500"], 0.24)};
   }
   .screen {
     width: 100%; height: 100%;
@@ -98,7 +106,7 @@ const html = `<!doctype html>
 <body>
   <div class="copy">
     <div class="icon">${icon}</div>
-    <h1>OMP Pulse</h1>
+    <h1>${brand.name}</h1>
     <p class="tagline">Your coding agent, in your pocket.</p>
     <p class="sub">Follow, answer and steer omp from your phone, or run it on Android with no computer at all.</p>
     <p class="footer">Free and open source · github.com/${REPO_SLUG}</p>
@@ -141,7 +149,7 @@ try {
     await tab.goto(pathToFileURL(page).href, { waitUntil: "load" });
     await tab.evaluate(() => document.fonts.ready);
     const loaded = await tab.evaluate(() => [...document.fonts].filter((f) => f.status === "loaded").length);
-    if (loaded < 2) throw new Error(`expected Geist and Geist Mono to load, got ${loaded} font face(s)`);
+    if (loaded < 2) throw new Error(`expected ${sansFamily} and ${monoFamily} to load, got ${loaded} font face(s)`);
     const raw = `${OUT}.raw.png`;
     await tab.screenshot({ path: raw, type: "png", clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT } });
     optimisePng(raw, OUT);

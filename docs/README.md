@@ -22,6 +22,7 @@ a phone. Everything else is here, by reader.
 - [Deploying](contributing/deploying.md): putting a change live on your own daemon, and checks against a deployed daemon.
 - [Releasing](contributing/releasing.md): release builds, release identity, licences, forks.
 - [Benchmarks](contributing/benchmarks.md): the bench harness, corpus, running each suite.
+- [Brand](contributing/brand.md): the name, colours, type and icon, and how to change a token.
 - [UI review](contributing/ui-review.md): photographing every UI state, the review daemon, README media.
 
 Directory guides:

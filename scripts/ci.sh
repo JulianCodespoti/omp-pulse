@@ -156,6 +156,7 @@ android_unit_tests() {
 step "web client (public/app)" web_client
 if want web; then
   step "docs match the code" scripts/docs/check-docs.sh
+  step "brand tokens in sync" node scripts/brand/sync-tokens.mjs --check
   step "web typecheck" npm --prefix web run --silent typecheck
   step "web unit tests" web_unit_tests
   step "website build and tests" sh -c 'node website/build.mjs && node --test website/site.test.mjs'

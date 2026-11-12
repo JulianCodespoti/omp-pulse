@@ -10,6 +10,8 @@
 //   screenshot-notice.png       the in-app "Reply ready" notice naming another conversation that just finished, with Open
 //   screenshot-plugin.png       plugins in a conversation: status chips beside the composer and a card under a test run
 //   demo.gif                    open a working session from the drawer and watch the live turn stream, edit, test and finish
+//   demo.mp4, demo.webm,        the same recording as 760 px video for the website hero (sharper and smaller than the GIF)
+//   demo-poster.png
 //   node scripts/docs/capture-readme-media.mjs                     # all nine
 //   node scripts/docs/capture-readme-media.mjs --only chat,gif     # subset by shot key
 //   node scripts/docs/capture-readme-media.mjs --out /tmp/media    # write somewhere else
@@ -42,6 +44,9 @@ const VIEWPORT = { width: 412, height: 892, deviceScaleFactor: 2.625, isMobile: 
 const PHONE_APPEARANCE = JSON.stringify({ accent: "violet", background: "black", userBubble: "tinted", turnFooter: "full" });
 const GIF_WIDTH = 380;
 const GIF_FPS = 12;
+// Twice the 380 px the website displays, so the hero stays sharp on 2x screens.
+const VIDEO_WIDTH = 760;
+const VIDEO_FPS = 30;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── Synthetic corpus ────────────────────────────────────────────────────────
@@ -432,7 +437,8 @@ async function record(page, run, holdMs) {
   return { frames, start, end };
 }
 
-function encodeGif({ frames, start, end }, out) {
+function encodeDemo({ frames, start, end }, outDir) {
+  const gifOut = join(outDir, "demo.gif");
   if (frames.length < 2) throw new Error(`screencast produced ${frames.length} frames`);
   const dir = mkdtempSync(join(tmpdir(), "omp-readme-gif-"));
   try {
@@ -448,7 +454,15 @@ function encodeGif({ frames, start, end }, out) {
     writeFileSync(join(dir, "list.txt"), list);
     const filter = `fps=${GIF_FPS},scale=${GIF_WIDTH}:-2:flags=lanczos,split[a][b];` +
       "[a]palettegen=max_colors=160:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle";
-    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", join(dir, "list.txt"), "-vf", filter, "-loop", "0", out], { stdio: "inherit" });
+    const input = ["-f", "concat", "-safe", "0", "-i", join(dir, "list.txt")];
+    execFileSync("ffmpeg", ["-v", "error", "-y", ...input, "-vf", filter, "-loop", "0", gifOut], { stdio: "inherit" });
+    // The website plays the same recording as video: a GIF is 256 colours and
+    // several times the size. Constant frame rate (fps filter) because the
+    // screencast timing is variable and players handle CFR loops best.
+    const vf = `fps=${VIDEO_FPS},scale=${VIDEO_WIDTH}:-2:flags=lanczos,format=yuv420p`;
+    execFileSync("ffmpeg", ["-v", "error", "-y", ...input, "-vf", vf, "-an", "-c:v", "libx264", "-preset", "veryslow", "-crf", "24", "-movflags", "+faststart", join(outDir, "demo.mp4")], { stdio: "inherit" });
+    execFileSync("ffmpeg", ["-v", "error", "-y", ...input, "-vf", vf, "-an", "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "36", "-row-mt", "1", "-deadline", "good", "-cpu-used", "1", join(outDir, "demo.webm")], { stdio: "inherit" });
+    execFileSync("ffmpeg", ["-v", "error", "-y", ...input, "-vf", `scale=${VIDEO_WIDTH}:-2:flags=lanczos`, "-frames:v", "1", join(outDir, "demo-poster.png")], { stdio: "inherit" });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -630,7 +644,7 @@ const SHOTS = {
       }, 2_000);
       const seconds = clip.end - clip.start;
       if (seconds < 8 || seconds > 16) console.warn(`demo.gif runs ${seconds.toFixed(1)} s (target 8-16 s)`);
-      encodeGif(clip, join(out, "demo.gif"));
+      encodeDemo(clip, out);
     } finally {
       await ui.close();
     }
@@ -828,6 +842,9 @@ const SHOTS = {
 
 const OUTPUT_FILES = [
   "demo.gif",
+  "demo.mp4",
+  "demo.webm",
+  "demo-poster.png",
   "screenshot-chat.png",
   "screenshot-drawer.png",
   "screenshot-workspace.png",
