@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The README opens with one composed image of three framed phones (Reply ready, a question, the diff) that reads on GitHub's light and dark themes, instead of three raw screenshots; `scripts/docs/render-brand-images.mjs` renders it beside the social card.
 - The website has a 25-second film after its opening: one violet pulse line carries a task from the terminal to the phone (a question answered in one tap, the reply ready, the diff checked, the next instruction sent) and folds into the icon. It downloads only when you press play (4.9 MB MP4, 3.3 MB WebM), and plays with native controls when script is off.
 - The UI state catalogue has the first-run "Setting up omp" screen (`onboarding-phone-setting-up`).
+- The website is quieter: no labels above section headings, no pulsing dot in the opening pill and no caption under the opening demo; the three facts under the opening buttons sit in a column, the selected tour item has a plain border, and neither way of using Pulse is highlighted until hovered.
+- The README's quick start is just the steps, "On your computer" and "On your phone", with the detail left to the Getting started and Phone mode guides, and its second image row is gone. The app's connection and update guide links point at the new "On your computer" heading.
 
 ### Fixed
 - A notice with a long conversation title (such as "Reply ready") truncates the title instead of pushing the notice and its Open button past the edge of the screen.

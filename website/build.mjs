@@ -463,7 +463,6 @@ function buildLandingPage() {
       ],
       cta: "Explore phone mode →",
       href: "docs/phone-mode.html",
-      phone: true,
     },
   ];
 
@@ -500,7 +499,6 @@ function buildLandingPage() {
     <div class="container hero-grid">
       <div>
         <div class="eyebrow">
-          <span class="pulse-dot" aria-hidden="true"></span>
           <span>Free and open source · Android and iPhone</span>
         </div>
         <h1>Your coding agent, in your pocket.</h1>
@@ -532,14 +530,13 @@ function buildLandingPage() {
               </video>
             </div>
           </div>
-          <!-- The toggle sits beside the caption, outside the screen: over the recording it read as
-               one of the app's own buttons (it covered the send button). -->
-          <div class="stage-caption">
+          <!-- The pause control sits under the phone, outside the screen: over the recording it read
+               as one of the app's own buttons (it covered the send button). -->
+          <div class="stage-controls">
             <button class="video-toggle" type="button" data-video-toggle aria-pressed="false" aria-label="Pause the demo video" hidden>
               <svg class="icon-pause" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><rect x="2.5" y="2" width="3" height="10" rx="1"/><rect x="8.5" y="2" width="3" height="10" rx="1"/></svg>
               <svg class="icon-play" width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M3.5 2.2v9.6a.6.6 0 0 0 .92.5l7.4-4.8a.6.6 0 0 0 0-1L4.42 1.7a.6.6 0 0 0-.92.5Z"/></svg>
             </button>
-            <span>Recorded in the app: opening a session and watching the agent edit code and run its tests.</span>
           </div>
         </div>
       </div>
@@ -550,7 +547,6 @@ function buildLandingPage() {
   <section class="section film-section" id="film">
     <div class="container">
       <div class="section-header">
-        <p class="section-kicker">The film</p>
         <h2 class="section-title">From your desk to your pocket in 25 seconds.</h2>
       </div>
       <!-- preload="none": nothing downloads until the reader asks for it. The markup carries
@@ -572,7 +568,6 @@ function buildLandingPage() {
   <section class="section" id="features">
     <div class="container">
       <div class="section-header">
-        <p class="section-kicker">What you can do</p>
         <h2 class="section-title">Everything you'd check at your desk, from wherever you are.</h2>
         <p class="section-desc">
           Not a cut-down chat window. Pulse shows the agent's real work as it happens, laid out for one thumb.
@@ -633,7 +628,6 @@ function buildLandingPage() {
   <section class="section" id="modes">
     <div class="container">
       <div class="section-header">
-        <p class="section-kicker">Two ways to use it</p>
         <h2 class="section-title">Use your computer, or just your phone.</h2>
         <p class="section-desc">
           The same app either way. Connect to the computer where you already run omp, or run everything on an Android phone.
@@ -643,7 +637,7 @@ function buildLandingPage() {
       <div class="modes-grid">
         ${modeCards
           .map(
-            (card) => `<article class="mode-card${card.phone ? " mode-card--phone" : ""}">
+            (card) => `<article class="mode-card">
           <div>
             <span class="mode-badge">${escapeHtml(card.badge)}</span>
             <h3>${escapeHtml(card.title)}</h3>
@@ -653,7 +647,7 @@ function buildLandingPage() {
             </ul>
           </div>
           <div>
-            <a class="btn ${card.phone ? "btn-primary" : "btn-secondary"}" href="${card.href}">${escapeHtml(card.cta)}</a>
+            <a class="btn btn-secondary" href="${card.href}">${escapeHtml(card.cta)}</a>
           </div>
         </article>`,
           )
@@ -666,7 +660,6 @@ function buildLandingPage() {
   <section class="section" id="phone-tools">
     <div class="container android-spotlight">
       <div>
-        <p class="section-kicker">Phone tools for the agent</p>
         <h2 class="section-title">An agent that can use your phone, when you let it.</h2>
         <p class="section-desc">
           ${rich("Turn on **Phone tools for the agent** and the agent can open and install apps, read what's on screen, take screenshots, tap, type and swipe, and use the clipboard. It's off by default: until you switch it on, the agent works only inside its own workspace.")}
@@ -700,7 +693,6 @@ function buildLandingPage() {
   <section class="section" id="setup">
     <div class="container">
       <div class="section-header">
-        <p class="section-kicker">Get started</p>
         <h2 class="section-title">Set up in three steps.</h2>
         <p class="section-desc">
           ${rich(`You'll need [omp](${OMP_URL}) working on your computer first. Then:`)}
@@ -766,7 +758,6 @@ function buildLandingPage() {
   <section class="section" id="safety">
     <div class="container">
       <div class="section-header">
-        <p class="section-kicker">Safe by design</p>
         <h2 class="section-title">Built to be trusted with your code.</h2>
         <p class="section-desc">
           Pulse is a remote control for an agent that edits real files, so it's careful about who can do what, and when.
@@ -795,7 +786,6 @@ function buildLandingPage() {
   <section class="section" id="downloads">
     <div class="container">
       <div class="section-header">
-        <p class="section-kicker">Download</p>
         <h2 class="section-title">Download OMP Pulse v${escapeHtml(VERSION)}</h2>
         <p class="section-desc">
           Free and open source under the MIT licence. The Android app is signed, and every download has a published checksum.

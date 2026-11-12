@@ -824,7 +824,7 @@ export class OmpSessionController {
         onClick: () => {
           window.open(appTooOld
             ? "https://github.com/JulianCodespoti/omp-pulse/blob/main/docs/user/phone-mode.md#getting-the-app-and-updates"
-            : "https://github.com/JulianCodespoti/omp-pulse#desktop-daemon-mode", "_blank", "noopener,noreferrer");
+            : "https://github.com/JulianCodespoti/omp-pulse#on-your-computer", "_blank", "noopener,noreferrer");
         },
       });
       return;
