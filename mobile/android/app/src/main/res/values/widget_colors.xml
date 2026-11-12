@@ -6,7 +6,7 @@
     <color name="widget_surface">#1b1d23</color>
     <color name="widget_on_surface">#e6e8ec</color>
     <color name="widget_on_surface_variant">#a3a8b3</color>
-    <color name="widget_accent">#9d86ff</color>
+    <color name="widget_accent">@color/brand_violet_400</color>
     <color name="widget_on_accent">#0f1317</color>
     <color name="widget_attention">#f2c14e</color>
     <color name="widget_ripple">#33ffffff</color>

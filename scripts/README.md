@@ -42,6 +42,14 @@ See [docs/contributing/deploying.md](../docs/contributing/deploying.md).
 - `verify-as-user.mjs`, `verify-perf.mjs`, `verify-herdr-alignment.py`:
   read-only checks against a deployed daemon (not in the gate).
 
+## `brand/`: one source for the brand colours
+
+See [docs/contributing/brand.md](../docs/contributing/brand.md).
+
+- `sync-tokens.mjs [--check]`: rewrites the pinned copies of `brand/tokens.json`
+  (the Android colour resources, the README release badge, the icon's gradient);
+  `--check` fails listing any that drifted. In the gate.
+
 ## `docs/`: keeping the docs true
 
 - `check-docs.sh`: asserts the docs match the code (generated module index,

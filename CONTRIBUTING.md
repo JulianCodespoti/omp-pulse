@@ -119,7 +119,8 @@ why.
 | `phone-harness/` | the phone agent's optional tools, shipped in the APK ([README](phone-harness/README.md)) |
 | `e2e/` | end-to-end suites in tiers by what they need ([README](e2e/README.md)) |
 | `bench/` | benchmarks against an isolated daemon |
-| `scripts/` | maintainer tooling by purpose: `ci.sh`, `android/`, `deploy/`, `docs/`, `release/`, `ui/` ([README](scripts/README.md)) |
+| `brand/` | the brand tokens (`tokens.json`): colours, radii, fonts and the product name every surface reads; change them as the [brand guide](docs/contributing/brand.md) describes |
+| `scripts/` | maintainer tooling by purpose: `ci.sh`, `android/`, `brand/`, `deploy/`, `docs/`, `release/`, `ui/` ([README](scripts/README.md)) |
 | `docs/` | documentation by reader: `user/`, `contributing/`, `internals/`, plus `media/` ([index](docs/README.md)) |
 | `public/` | generated: the built web client (`public/app`) and published APK, embedded into the binary at compile time |
 
