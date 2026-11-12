@@ -361,7 +361,7 @@ export function ChangesTab({ sessionPath, active }: { sessionPath: string; activ
         icon={<GitCompareIcon />}
         title="Changes aren’t available"
         description={isPhoneMode() ? "Update the Android app to see changes here." : "Update omp-pulse on your computer to see changes here."}
-        action={{ label: "Update guide", onClick: () => { window.open(isPhoneMode() ? "https://github.com/JulianCodespoti/omp-pulse/blob/main/docs/user/phone-mode.md#getting-the-app-and-updates" : "https://github.com/JulianCodespoti/omp-pulse#desktop-daemon-mode", "_blank", "noopener,noreferrer"); } }}
+        action={{ label: "Update guide", onClick: () => { window.open(isPhoneMode() ? "https://github.com/JulianCodespoti/omp-pulse/blob/main/docs/user/phone-mode.md#getting-the-app-and-updates" : "https://github.com/JulianCodespoti/omp-pulse#on-your-computer", "_blank", "noopener,noreferrer"); } }}
       />
     );
   } else if (load.state === "error") {

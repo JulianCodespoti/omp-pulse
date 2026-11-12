@@ -132,7 +132,7 @@ for(const phone of [false,true]) test(`protocol mismatch opens the host-correct 
  assert.equal(Boolean(banner),true);
  await f.f.act(async()=>[...banner.querySelectorAll('button')].find(b=>b.textContent.trim()==='Update guide').click());
  assert.equal(opened.length,1);
- assert.match(opened[0][0],/#desktop-daemon-mode$/);
+ assert.match(opened[0][0],/#on-your-computer$/);
  assert.equal(f.f.calls.retry,0);assert.equal(f.f.calls.cancel,0);assert.equal(f.f.draft(),'Different unsent draft');
 });
 

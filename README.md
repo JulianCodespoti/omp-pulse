@@ -17,7 +17,7 @@
 <p align="center">
   <a href="https://juliancodespoti.github.io/omp-pulse/">Website</a> ·
   <a href="docs/user/getting-started.md">Get started</a> ·
-  <a href="#phone-mode-android-no-computer">Phone mode</a> ·
+  <a href="#on-your-phone">Phone mode</a> ·
   <a href="https://github.com/JulianCodespoti/omp-pulse/releases/latest/download/omp-pulse.apk">Download APK</a> ·
   <a href="docs/README.md">Documentation</a> ·
   <a href="SECURITY.md">Security</a>
@@ -39,26 +39,6 @@
 
 Everything you would check at your desk, from wherever you are. Pulse shows the agent's real work as it happens, laid out for one thumb.
 
-<table>
-  <tr>
-    <td align="center" width="33%">
-      <a href="docs/media/screenshot-drawer.png"><img src="docs/media/screenshot-drawer.png" width="240" alt="The side panel listing projects, conversations that need you, pinned and recent conversations"></a>
-      <br>
-      <sub>Every conversation, one swipe away, with the ones waiting on you at the top.</sub>
-    </td>
-    <td align="center" width="33%">
-      <a href="docs/media/demo.gif"><img src="docs/media/demo.gif" width="240" alt="Opening a running session from the side panel, then watching the agent edit a file, run its tests and write its reply"></a>
-      <br>
-      <sub>See what it's doing, as it does it.</sub>
-    </td>
-    <td align="center" width="33%">
-      <a href="docs/media/screenshot-phone-tools.png"><img src="docs/media/screenshot-phone-tools.png" width="240" alt="Settings, Phone access, with the Phone tools for the agent switch and the Android permissions it uses"></a>
-      <br>
-      <sub>On Android, let the agent use your phone, only when you allow it.</sub>
-    </td>
-  </tr>
-</table>
-
 - **See what it's doing, as it does it.** Every file it reads, change it makes and test it runs appears the moment it happens; step in mid-task or stop it.
 - **Get a tap when it needs you.** Pulse notifies you when a reply is ready or the agent is waiting on you, even when the app is closed.
 - **Answer in one tap.** When the agent needs a decision, pick a choice and it carries on, with no typing.
@@ -78,7 +58,7 @@ And:
 
 The same app either way. There is no Pulse account and no Pulse server in the middle: your code stays on your hardware, and the agent talks straight to the model provider you already use.
 
-| | [With your computer](#desktop-daemon-mode) | [Phone only](#phone-mode-android-no-computer) |
+| | [With your computer](#on-your-computer) | [Phone only](#on-your-phone) |
 |---|---|---|
 | Works on | Android and iPhone | Android |
 | Where the agent runs | Your Mac, Windows or Linux computer | The phone itself |
@@ -88,73 +68,46 @@ The same app either way. There is no Pulse account and no Pulse server in the mi
 
 ## Quick start
 
-### Desktop daemon mode
+### On your computer
 
-Install and configure [omp](https://github.com/can1357/oh-my-pi) on your computer first (`omp --version`). The [Getting started guide](docs/user/getting-started.md) walks through the same steps with more detail.
+You need [omp](https://github.com/can1357/oh-my-pi) working first. The [Getting started guide](docs/user/getting-started.md) has every step in detail.
 
-#### 1. Install `omp-pulse`
+1. **Install Pulse.** Linux or Mac:
 
-**Linux** (`x86_64` or `aarch64`, static `musl` — any distro) and **macOS** (Apple Silicon or Intel):
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/JulianCodespoti/omp-pulse/main/install.sh | sh
+   ```
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/JulianCodespoti/omp-pulse/main/install.sh | sh
-```
+   Windows (PowerShell):
 
-**Windows** (`x86_64`, PowerShell 5.1+):
+   ```powershell
+   irm https://raw.githubusercontent.com/JulianCodespoti/omp-pulse/main/install.ps1 | iex
+   ```
 
-```powershell
-irm https://raw.githubusercontent.com/JulianCodespoti/omp-pulse/main/install.ps1 | iex
-```
+2. **Start it.**
 
-*(Or download [`install.ps1`](https://raw.githubusercontent.com/JulianCodespoti/omp-pulse/main/install.ps1) to inspect it first and run `powershell -ExecutionPolicy Bypass -File install.ps1`.)*
+   ```sh
+   omp-pulse setup
+   omp-pulse service install
+   ```
 
-Both installers verify the archive against the release's `SHA256SUMS` before installing to `~/.local/bin` (Unix) or `%LOCALAPPDATA%\Programs\omp-pulse` (Windows).
+3. **Give it a secure address**, so notifications work. With [Tailscale](https://tailscale.com) on your computer and phone:
 
-#### 2. Set up and start the background service
+   ```sh
+   tailscale serve --bg --set-path / http://127.0.0.1:7681
+   ```
 
-```sh
-omp-pulse setup
-omp-pulse service install
-```
+4. **Pair your phone.** Run `omp-pulse pair` and scan the QR code. On iPhone, add Pulse to your Home Screen; on Android, install the [app](https://github.com/JulianCodespoti/omp-pulse/releases/latest/download/omp-pulse.apk) and tap **Connect a computer**.
 
-`setup` prepares Pulse and connects it to omp: it writes `config.toml`, generates the desktop owner credential and installs the `omp` desktop-control extension (reopen idle `omp` sessions to load it). The service starts Pulse in the background whenever you log in. Prefer a terminal window? Run `omp-pulse serve`.
+### On your phone
 
-#### 3. Give it a private https address (recommended)
+Android only, no computer needed: a 64-bit phone with Android 7 or newer and about 500 MB free.
 
-The daemon binds to `127.0.0.1:7681` by default. With [Tailscale](https://tailscale.com) signed into the same tailnet on your computer and phone:
+1. Install the [Android app](https://github.com/JulianCodespoti/omp-pulse/releases/latest/download/omp-pulse.apk).
+2. Tap **Run on this phone**.
+3. Sign in to your model provider and start a chat.
 
-```sh
-tailscale serve --bg --set-path / http://127.0.0.1:7681
-```
-
-Tailscale provides a trusted https address (`https://<machine>.<tailnet>.ts.net/`), which Pulse needs to be added to your Home Screen, keep history offline and send notifications. For Cloudflare Tunnel or LAN setups, see [Networking](docs/user/networking.md).
-
-#### 4. Pair your phone
-
-```sh
-omp-pulse pair
-```
-
-- **iPhone or Android browser (PWA):** Open the printed URL or scan the QR code, complete enrollment, and add the app to your Home Screen.
-- **Android native app:** Install [`omp-pulse.apk`](https://github.com/JulianCodespoti/omp-pulse/releases/latest/download/omp-pulse.apk), tap **Connect a computer**, enter your `https://…/app/` URL, and scan or type the 6-digit pairing code.
-
-Pairing codes are single-use and expire after 5 minutes. Use `omp-pulse pair --role read` for a watch-only device, or run `omp-pulse doctor` anytime to verify every link in the live-sync chain.
-
----
-
-### Phone mode (Android, no computer)
-
-Run `omp` and an Alpine Linux workspace directly on an **arm64** phone running **Android 7.0+**. Reserve roughly **500 MB** of free storage for the unpacked runtime (~250 MB one-time download) plus space for your repositories.
-
-<p align="center">
-  <a href="docs/media/screenshot-phone-mode.png"><img src="docs/media/screenshot-phone-mode.png" width="250" alt="Android onboarding screen offering Run on this phone or Connect a computer"></a>
-</p>
-
-1. Download and install **[`omp-pulse.apk`](https://github.com/JulianCodespoti/omp-pulse/releases/latest/download/omp-pulse.apk)** from the latest GitHub Release (updates are signed with a stable key and work cleanly with [Obtainium](https://github.com/ImranR98/Obtainium)).
-2. Open the app and tap **Run on this phone**. Every Alpine package and the `omp` binary are verified against pinned SHA-256 digests before unpacking.
-3. Open **Settings › Model providers** to sign in (Anthropic, OpenAI Codex, GitHub Copilot, Gemini, OpenRouter, DeepSeek, or API key), pick a folder, and start a chat.
-
-Want the agent to interact with Android itself? Enable **Settings › Phone access › Phone tools for the agent** to expose the `android` CLI and `phone` tool server (app launching, clipboard, screenshots, and accessibility-gated UI actions). Read the [Phone Mode Guide](docs/user/phone-mode.md) for full details.
+The [phone mode guide](docs/user/phone-mode.md) covers the rest, including letting the agent use your phone.
 
 ---
 

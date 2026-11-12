@@ -26,7 +26,7 @@ export function VoiceButton({ dictation }: { dictation: UseDictationReturn }) {
           <div className="space-y-3 pb-2 text-meta">
             <p>{label}</p>
             <p>Microphone recording needs a supported browser and a secure HTTPS or local connection. The connection guide explains how to reach your computer securely.</p>
-            <Button type="button" variant="secondary" className="min-h-12 w-full" onClick={() => window.open("https://github.com/JulianCodespoti/omp-pulse#desktop-daemon-mode", "_blank", "noopener,noreferrer")}>Connection guide</Button>
+            <Button type="button" variant="secondary" className="min-h-12 w-full" onClick={() => window.open("https://github.com/JulianCodespoti/omp-pulse#on-your-computer", "_blank", "noopener,noreferrer")}>Connection guide</Button>
           </div>
         </BottomSheet>
       </>

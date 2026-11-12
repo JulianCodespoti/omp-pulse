@@ -319,7 +319,7 @@ samp {
   align-items: center;
   gap: 9px;
   max-width: 100%;
-  padding: 5px 12px 5px 9px;
+  padding: 5px 12px;
   border-radius: 999px;
   background: var(--surface-1);
   border: 1px solid var(--border-strong);
@@ -334,27 +334,6 @@ samp {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.pulse-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--emerald);
-  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.18);
-  animation: pulse-ring 2.6s ease-in-out infinite;
-}
-
-@keyframes pulse-ring {
-
-  0%,
-  100% {
-    box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.14);
-  }
-
-  50% {
-    box-shadow: 0 0 0 7px rgba(52, 211, 153, 0.26);
-  }
 }
 
 .hero h1 {
@@ -490,8 +469,9 @@ samp {
 
 .hero-facts {
   display: flex;
-  flex-wrap: wrap;
-  gap: 18px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
   font-family: var(--font-mono);
   font-size: 0.77rem;
   color: var(--fg-subtle);
@@ -594,16 +574,10 @@ samp {
   display: block;
 }
 
-.stage-caption {
+.stage-controls {
   display: flex;
-  align-items: center;
   justify-content: center;
-  gap: 10px;
   margin-top: 14px;
-  text-align: left;
-  font-family: var(--font-mono);
-  font-size: 0.76rem;
-  color: var(--fg-subtle);
 }
 
 /* ── The film ────────────────────────────────────────────────────────────── */
@@ -779,12 +753,11 @@ samp {
   gap: 24px;
   position: relative;
   overflow: hidden;
+  transition: border-color 160ms var(--ease-spring);
 }
 
-.mode-card--phone {
-  background:
-    radial-gradient(circle at 100% 0%, rgba(145, 121, 255, 0.14), transparent 55%),
-    var(--bg-elevated);
+/* Neither way of using Pulse is the default, so neither card is lit until it is hovered. */
+.mode-card:hover {
   border-color: var(--accent-border);
 }
 
@@ -802,7 +775,7 @@ samp {
   border: 1px solid var(--border);
 }
 
-.mode-card--phone .mode-badge {
+.mode-card:hover .mode-badge {
   background: var(--accent-dim);
   color: var(--accent-bright);
   border-color: var(--accent-border);
@@ -885,7 +858,6 @@ samp {
 .showcase-tab[aria-selected="true"] {
   background: var(--surface-1);
   border-color: var(--accent-border);
-  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .showcase-tab-title {
