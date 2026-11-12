@@ -59,8 +59,9 @@ See [docs/contributing/brand.md](../docs/contributing/brand.md).
   from the `//!` header of every `src/**/*.rs`.
 - `capture-readme-media.mjs`: regenerates the screenshots and GIF in
   `docs/media/`; see [docs/contributing/ui-review.md](../docs/contributing/ui-review.md).
-- `render-social-card.mjs`: regenerates `docs/media/social-card.png`, the link-preview
-  image the website serves as `og:image`.
+- `render-brand-images.mjs`: regenerates `docs/media/social-card.png`, the link-preview
+  image the website serves as `og:image`, and `docs/media/readme-hero.webp`, the README's
+  three-phone image.
 
 ## `release/`: public releases and forks
 

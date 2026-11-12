@@ -26,15 +26,11 @@
 <br>
 
 <p align="center">
-  <a href="docs/media/demo.gif"><img src="docs/media/demo.gif" width="270" alt="Opening a running session from the side panel, then watching the agent edit a file, run its tests and write its reply"></a>
-  &nbsp;&nbsp;
-  <a href="docs/media/screenshot-chat.png"><img src="docs/media/screenshot-chat.png" width="270" alt="A conversation in Pulse: the agent's steps listed above its reply, with the message box at the bottom"></a>
-  &nbsp;&nbsp;
-  <a href="docs/media/screenshot-workspace.png"><img src="docs/media/screenshot-workspace.png" width="270" alt="The workspace panel open on Changes, showing the lines added and removed in a file"></a>
+  <a href="docs/media/readme-hero.webp"><img src="docs/media/readme-hero.webp" width="800" alt="Three phones side by side: a &quot;Reply ready&quot; notification over a conversation, a question from the agent with choices to tap, and the list of lines the agent changed in a file"></a>
 </p>
 
 <p align="center">
-  <em>Left: opening a session and watching the agent edit code and run its tests. Middle: a conversation, with the agent's steps above its reply. Right: the files the agent changed, line by line.</em>
+  <em>Get a tap when a reply is ready, answer the agent's question, then check exactly what it changed.</em>
 </p>
 
 ---
@@ -51,9 +47,9 @@ Everything you would check at your desk, from wherever you are. Pulse shows the 
       <sub>Every conversation, one swipe away, with the ones waiting on you at the top.</sub>
     </td>
     <td align="center" width="33%">
-      <a href="docs/media/screenshot-ask.png"><img src="docs/media/screenshot-ask.png" width="240" alt="A question from the agent with several choices, one marked as recommended"></a>
+      <a href="docs/media/demo.gif"><img src="docs/media/demo.gif" width="240" alt="Opening a running session from the side panel, then watching the agent edit a file, run its tests and write its reply"></a>
       <br>
-      <sub>Answer the agent's questions in one tap.</sub>
+      <sub>See what it's doing, as it does it.</sub>
     </td>
     <td align="center" width="33%">
       <a href="docs/media/screenshot-phone-tools.png"><img src="docs/media/screenshot-phone-tools.png" width="240" alt="Settings, Phone access, with the Phone tools for the agent switch and the Android permissions it uses"></a>

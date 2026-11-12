@@ -90,5 +90,7 @@ It reuses the UI state capture's page harness (pinned clock, stubbed writes,
 injected frames), so no omp child is spawned and no model is called. It also
 needs ffmpeg for the GIF and pngquant for the PNGs.
 
-`node scripts/docs/render-social-card.mjs` regenerates `docs/media/social-card.png`, the
-1280x640 link-preview card the website serves as `og:image`; it needs no daemon.
+`node scripts/docs/render-brand-images.mjs` regenerates `docs/media/social-card.png`, the
+1280x640 link-preview card the website serves as `og:image`, and
+`docs/media/readme-hero.webp`, the README's three-phone image, from the screenshots above;
+it needs no daemon, and `magick` for the WebP.

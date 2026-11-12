@@ -546,6 +546,28 @@ function buildLandingPage() {
     </div>
   </section>
 
+  <!-- The film -->
+  <section class="section film-section" id="film">
+    <div class="container">
+      <div class="section-header">
+        <p class="section-kicker">The film</p>
+        <h2 class="section-title">From your desk to your pocket in 25 seconds.</h2>
+      </div>
+      <!-- preload="none": nothing downloads until the reader asks for it. The markup carries
+           native controls so the film plays without script; site.js swaps them for the
+           play button until the first press. -->
+      <div class="film-frame">
+        <video controls preload="none" playsinline poster="assets/media/film-poster.jpg" width="1920" height="1080" data-film aria-label="The OMP Pulse film: a task started in a terminal, a question answered on the phone in one tap, the reply ready, the diff checked and the next instruction sent.">
+          <source src="assets/media/film.webm" type="video/webm">
+          <source src="assets/media/film.mp4" type="video/mp4">
+        </video>
+        <button class="film-play" type="button" data-film-play aria-label="Play the 25-second film" hidden>
+          <svg width="28" height="28" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M3.5 2.2v9.6a.6.6 0 0 0 .92.5l7.4-4.8a.6.6 0 0 0 0-1L4.42 1.7a.6.6 0 0 0-.92.5Z"/></svg>
+        </button>
+      </div>
+    </div>
+  </section>
+
   <!-- What you can do -->
   <section class="section" id="features">
     <div class="container">
@@ -1000,6 +1022,9 @@ export function buildSite(outDir = DIST) {
     "demo.mp4",
     "demo.webm",
     "demo-poster.png",
+    "film.mp4",
+    "film.webm",
+    "film-poster.jpg",
     "screenshot-chat.png",
     "screenshot-notice.png",
     "screenshot-plugin.png",
@@ -1013,7 +1038,10 @@ export function buildSite(outDir = DIST) {
   for (const name of mediaFiles) {
     const src = join(ROOT, "docs/media", name);
     if (!existsSync(src)) {
-      throw new Error(`Missing required media asset: ${relative(ROOT, src)} (run scripts/docs/capture-readme-media.mjs, or scripts/docs/render-social-card.mjs for social-card.png)`);
+      const how = name.startsWith("film")
+        ? "the film is rendered outside this repository; see docs/contributing/brand.md"
+        : "run scripts/docs/capture-readme-media.mjs, or scripts/docs/render-brand-images.mjs for social-card.png";
+      throw new Error(`Missing required media asset: ${relative(ROOT, src)} (${how})`);
     }
     copyFileSync(src, join(outDir, "assets/media", name));
   }

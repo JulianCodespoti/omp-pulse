@@ -616,6 +616,10 @@ export const RECIPES = [
   { id: "onboarding-phone-computers-checking", group: "Settings", title: "Phone mode off: checking saved computers",
     setup: { ompLocal: PHONE({ mode: "unset", computers: ["https://studio.example-tailnet.ts.net/app/", "https://desk.example-tailnet.ts.net/app/"], computerStatus: { "https://studio.example-tailnet.ts.net/app/": "checking", "https://desk.example-tailnet.ts.net/app/": "checking" } }) },
     run: async (ui) => { await ui.el("[data-testid='onboarding-computer-list']"); await ui.text("Checking"); } },
+  // First run: "Run on this phone" tapped, the runtime still downloading and unpacking.
+  { id: "onboarding-phone-setting-up", group: "Settings", title: "First run: setting up omp on this phone",
+    setup: { ompLocal: PHONE({ mode: "unset", installed: false, phase: "installing", progress: 42, message: "Installing omp", downloadBytes: 180_000_000 }) },
+    run: async (ui) => { await ui.click("[data-testid='onboarding-phone']"); await ui.text("Setting up omp"); await ui.text("42%"); } },
   // Android run mode: a phone running omp itself, no computer connected yet.
   { id: "settings-run-on-connect", group: "Settings", title: "Run on › Computer: connect by scanning",
     setup: { ompLocal: { mode: "phone", phase: "ready", supported: true, laptopUrl: null, downloadBytes: 0, progress: -1, message: "", error: null, ompVersion: "capture" } },

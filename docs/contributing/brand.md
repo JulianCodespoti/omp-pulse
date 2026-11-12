@@ -98,11 +98,25 @@ a rendering of it:
   and `badge-96.png`, served by the web client and, for `icon-192.png`, the website's
   favicon and Apple touch icon.
 - **Social card:** `docs/media/social-card.png`, rendered from the tokens and the
-  icon by `scripts/docs/render-social-card.mjs`.
+  icon by `scripts/docs/render-brand-images.mjs`, which also renders the README's
+  three-phone hero, `docs/media/readme-hero.webp`.
 
 The raster exports (the PNG icons and the launcher foreground mipmaps) have no
 generator: if the icon's artwork or violet changes, re-export them from the SVG
 by hand.
+
+## The film
+
+`docs/media/film.mp4`, `film.webm` and `film-poster.jpg` are the website's 25-second
+film: one violet pulse line carries a task from the terminal to the phone and back,
+then folds into the icon. They are web encodes (1080p, 30 fps) of a 4K60 master.
+
+The film was made with [onetake](https://github.com/feitangyuan/onetake), whose
+licence (PolyForm Noncommercial) does not allow its code in this MIT repository, so
+the composition and the master live outside it, and only the rendered files are
+committed. Like the rest of the media, everything on screen is invented. Changing the
+film means re-rendering it in that project and replacing the three files; nothing in
+this repository generates them.
 
 ## Changing a token
 
@@ -117,7 +131,7 @@ by hand.
    and emits them as `--brand-*` custom properties ahead of `website/styles.css`,
    which aliases them to its own short names (`--bg`, `--accent`, ...).
 4. Re-render the social card, since a PNG cannot read the tokens:
-   `node scripts/docs/render-social-card.mjs` (see [UI review](ui-review.md) for the
+   `node scripts/docs/render-brand-images.mjs` (see [UI review](ui-review.md) for the
    browser it needs).
 5. If the change touches the icon's artwork or the in-app accent, do the manual steps
    above.
