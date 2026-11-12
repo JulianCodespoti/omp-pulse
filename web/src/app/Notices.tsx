@@ -329,7 +329,10 @@ function ToastRow({ toast, leaving, onExited }: { toast: Toast; leaving: boolean
         leaving ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
       )}
     >
-      <div className={cn("min-h-0", leaving && "overflow-hidden")}>
+      {/* min-w-0: the grid's one auto column otherwise grows to the pill's min-content, and a
+          truncating title's min-content is the whole title, so a long one pushed the pill and
+          its action past the screen edge instead of truncating. */}
+      <div className={cn("min-h-0 min-w-0", leaving && "overflow-hidden")}>
         <div className="pb-2">
           <div
             ref={pillRef}

@@ -267,7 +267,11 @@ export function RunGroup({ messages, live, toolsLive = live, sessionPath, childr
 export function TurnWorkChip({ work, render, sessionPath }: { work: TurnWork; render: (item: WorkItem, sectioned: boolean) => ReactNode; sessionPath?: string | null }) {
   // Past a dozen calls the work reads as section rows; stretches split by markers would otherwise each draw their own small rail.
   const long = toolsIn(workMessages(work)) > SECTION_CALLS;
-  const messages = useMemo(() => workMessages(work), [work]);
+  // The messages whose calls this group owns, for its plugin cards. An edits item summarises the
+  // whole turn (its prompt, every run and the reply), so its calls belong to the run or message that
+  // made them; counting them here drew a claimed call's card a second time under the turn's
+  // edit-summary group, after the reply.
+  const messages = useMemo(() => work.items.flatMap((item) => (item.kind === "edits" ? [] : item.messages)), [work]);
   return (
     <>
       <WorkGroup title={workLabel(work)} failed={work.failed} testId="turn-work">
