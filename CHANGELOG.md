@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The website, README and docs now lead with what Pulse does for you instead of how it is built: a "Your coding agent, in your pocket" landing page with a six-part feature tour (including notifications and plugins), a three-step setup, plain-language "Safe by design" promises, downloads split by computer and phone (with iPhone covered), and a questions section.
 - New [Getting started](docs/user/getting-started.md) guide, from installing Pulse to a first conversation and notifications; the docs sidebar is regrouped into Start here, Using Pulse, Under the hood and Project.
 
+### Fixed
+- A notice with a long conversation title (such as "Reply ready") truncates the title instead of pushing the notice and its Open button past the edge of the screen.
+- A plugin card for a tool call shows once per turn; a turn that edited files no longer repeats it under the edit summary after the reply.
+
 ## [0.1.0] - 2026-11-12
 
 ### Changed (mobile polish)

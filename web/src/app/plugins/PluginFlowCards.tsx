@@ -48,19 +48,7 @@ const FlowCall = memo(function FlowCall({ part, live, sessionPath }: { part: Too
 });
 
 function ClaimedCards({ messages, live, sessionPath }: { messages: readonly UiMessage[]; live: boolean; sessionPath?: string | null }): JSX.Element {
-  // A call can appear in several of a stretch's items (edits repeat their run's messages): once each.
-  const parts = useMemo(() => {
-    const seen = new Set<string>();
-    const out: ToolUiPart[] = [];
-    for (const message of messages) {
-      for (const part of message.parts) {
-        if (part.kind !== "tool" || seen.has(part.callId)) continue;
-        seen.add(part.callId);
-        out.push(part);
-      }
-    }
-    return out;
-  }, [messages]);
+  const parts = useMemo(() => messages.flatMap((message) => message.parts.filter((part): part is ToolUiPart => part.kind === "tool")), [messages]);
   return <>{parts.map((part) => <FlowCall key={part.callId} part={part} live={live} sessionPath={sessionPath} />)}</>;
 }
 

@@ -39,6 +39,15 @@ const settled=message=>{const r=root();
     render:work=>h(WorkRun,{messages:work.messages,toolsLive:false,defaultExpanded:true})}));return r;};
 const live=message=>{const r=root();
   r.render(h(WorkRun,{messages:[message],toolsLive:true,latestThought:true,group:'live',liveMessageId:message.id}));return r;};
+// A turn that landed edits settles as two groups: its run's, then the edit summary after the
+// reply, whose items span the whole turn and so repeat the run's messages (claimed call included).
+const settledWithEdits=message=>{const r=root();
+  const reply={id:'reply',role:'assistant',text:'Done.',parts:[{kind:'text',text:'Done.'}]};
+  const run={kind:'run',key:'run-'+message.id,messages:[message],continued:true,reply:'Done.'};
+  const edits={kind:'edits',key:'edits:reply',messages:[message,reply]};
+  const group=item=>({items:[item],summary:undefined,failed:false});
+  const body=work=>work.kind==='edits'?h('div',null,'Edited 1 file'):h(WorkRun,{messages:work.messages,toolsLive:false,defaultExpanded:true});
+  r.render(h('div',null,h(TurnWorkChip,{work:group(run),render:body}),h(TurnWorkChip,{work:group(edits),render:body})));return r;};
 window.fixture={act,
   retained:()=>JSON.stringify(hooks.keyRetains.map(String)),
   details:()=>JSON.stringify(entriesToTranscript([
@@ -52,6 +61,7 @@ window.fixture={act,
   mountMessages(){const r=root();
     r.render(h('div',null,h(MessageParts,{message:note}),h(MessageParts,{message:other})));return r;},
   mountSettledClaimed:()=>settled(withClaimed),
+  mountSettledWithEdits:()=>settledWithEdits(withClaimed),
   mountSettledPlain:()=>settled(onlyPlain),
   mountLiveClaimed:()=>live(withClaimed),
   mountLivePlain:()=>live(onlyPlain)};
@@ -129,6 +139,15 @@ test('a settled Summary-mode turn shows one plugin card in the flow, under its c
   await act(() => q("[data-testid='turn-work-title']")[0].click());
   assert.equal(q("[data-testid='plugin-tool-card']").length, 1);
   assert.equal(q("[data-testid='tool-part'] [data-testid='plugin-tool-card']").length, 0);
+});
+
+test("a turn's edit summary repeating a claimed call does not draw its card a second time", async t => {
+  const { q, retained } = await fixture(t, 'mountSettledWithEdits');
+  assert.equal(q("[data-testid='turn-work']").length, 2);
+  const cards = q("[data-testid='plugin-tool-card']");
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].getAttribute('data-call'), 'claimed');
+  assert.equal(retained().length, 1);
 });
 
 test('a live Summary-mode run shows the plugin card in the flow, beside the rail rather than inside it', async t => {
