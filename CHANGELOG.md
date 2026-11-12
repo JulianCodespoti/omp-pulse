@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The website, README and docs now lead with what Pulse does for you instead of how it is built: a "Your coding agent, in your pocket" landing page with a six-part feature tour (including notifications and plugins), a three-step setup, plain-language "Safe by design" promises, downloads split by computer and phone (with iPhone covered), and a questions section.
 - New [Getting started](docs/user/getting-started.md) guide, from installing Pulse to a first conversation and notifications; the docs sidebar is regrouped into Start here, Using Pulse, Under the hood and Project.
+- The app is called OMP Pulse wherever it is installed (Android home screen, browser Home Screen, page title), and its default look is the new OMP Pulse preset: brand violet on black, matching the icon and the website. ChatGPT's white and blue remains a preset; an accent you chose yourself is kept.
+- Android: the app theme and the widget's accent before Android 12 are violet instead of mint, and Android 13+ themed icons get a monochrome Pulse mark instead of the full-colour icon.
+- Shared links to the website show a preview: a 1280×640 social card (`docs/media/social-card.png`, rendered by `scripts/docs/render-social-card.mjs`) at an absolute URL. The old SVG card, which most apps cannot display, is gone.
 
 ### Fixed
 - A notice with a long conversation title (such as "Reply ready") truncates the title instead of pushing the notice and its Open button past the edge of the screen.

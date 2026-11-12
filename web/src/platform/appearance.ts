@@ -183,11 +183,14 @@ export const MOTION: readonly Choice<MotionPreference>[] = [
   { value: "reduce", label: "Always" },
 ];
 
-/** Every default is the app's look before Appearance existed. */
+/**
+ * Every default is the house look, the OMP Pulse preset: brand violet on black, the look the
+ * icon, website and screenshots show. It was ChatGPT's white and blue until the brand settled.
+ */
 export const DEFAULT_APPEARANCE: Appearance = {
   textSize: "default",
   density: "comfortable",
-  accent: "chatgpt",
+  accent: "violet",
   accentHue: 265,
   background: "black",
   contrast: "standard",
@@ -402,6 +405,7 @@ export function customAccentTokens(h: number): Record<string, string> {
 
 /** One tap, many choices: each preset sets only the look, never behaviour you tuned (Enter key, haptics…). */
 export const PRESETS: readonly { readonly value: string; readonly label: string; readonly patch: Partial<Appearance> }[] = [
+  { value: "pulse", label: "OMP Pulse", patch: { accent: "violet", background: "black", corners: "default", font: "system", messageStyle: "plain", userBubble: "tinted", density: "comfortable", lineSpacing: "default" } },
   { value: "chatgpt", label: "ChatGPT", patch: { accent: "chatgpt", background: "black", corners: "default", font: "system", messageStyle: "plain", userBubble: "tinted", density: "comfortable", lineSpacing: "default" } },
   { value: "deepseek", label: "DeepSeek", patch: { accent: "custom", accentHue: 268, background: "grey", corners: "round", font: "system", messageStyle: "plain", userBubble: "neutral", density: "comfortable", lineSpacing: "relaxed" } },
   { value: "terminal", label: "Terminal", patch: { accent: "mono", background: "black", corners: "square", font: "mono", messageStyle: "plain", userBubble: "neutral", density: "compact", lineSpacing: "tight", streaming: "caret", toolCalls: "expanded", colourMarkdown: true } },

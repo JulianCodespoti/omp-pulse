@@ -29,6 +29,10 @@ const REPO_URL =
   cargoToml.match(/^repository\s*=\s*"([^"]+)"/m)?.[1]?.replace(/\/+$/, "") ??
   "https://github.com/JulianCodespoti/omp-pulse";
 const REPO_SLUG = REPO_URL.replace(/^https?:\/\/github\.com\//, "");
+// GitHub Pages serves a project site at https://{owner}.github.io/{name}/ (owner lowercased).
+const [REPO_OWNER, REPO_NAME] = REPO_SLUG.split("/");
+const SITE_URL = `https://${REPO_OWNER.toLowerCase()}.github.io/${REPO_NAME}/`;
+const SOCIAL_CARD = "assets/media/social-card.png";
 const RAW_MAIN = `https://raw.githubusercontent.com/${REPO_SLUG}/main`;
 const RELEASES_LATEST = `${REPO_URL}/releases/latest`;
 const APK_DIRECT = `${RELEASES_LATEST}/download/omp-pulse.apk`;
@@ -264,7 +268,10 @@ function renderFooter(rootPrefix) {
 </footer>`;
 }
 
-function renderDocument({ title, description, rootPrefix, activeSection, bodyHtml }) {
+function renderDocument({ title, description, rootPrefix, activeSection, bodyHtml, slug = "" }) {
+  const pageUrl = SITE_URL + slug;
+  const cardUrl = SITE_URL + SOCIAL_CARD;
+  const cardAlt = "OMP Pulse: your coding agent, in your pocket";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -274,12 +281,18 @@ function renderDocument({ title, description, rootPrefix, activeSection, bodyHtm
   <meta name="description" content="${escapeHtml(description)}">
   <meta name="theme-color" content="#08090c">
   <meta property="og:type" content="website">
+  <meta property="og:site_name" content="OMP Pulse">
+  <meta property="og:url" content="${escapeHtml(pageUrl)}">
   <meta property="og:title" content="${escapeHtml(title)}">
   <meta property="og:description" content="${escapeHtml(description)}">
-  <meta property="og:image" content="${rootPrefix}assets/media/og-card.svg">
+  <meta property="og:image" content="${escapeHtml(cardUrl)}">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta property="og:image:alt" content="${escapeHtml(cardAlt)}">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="${escapeHtml(title)}">
   <meta name="twitter:description" content="${escapeHtml(description)}">
+  <meta name="twitter:image" content="${escapeHtml(cardUrl)}">
   <link rel="icon" type="image/svg+xml" href="${rootPrefix}assets/icon.svg">
   <link rel="stylesheet" href="${rootPrefix}styles.css">
 </head>
@@ -899,45 +912,8 @@ function buildDocPage(pageIndex) {
     rootPrefix,
     activeSection: "docs",
     bodyHtml,
+    slug: page.slug,
   });
-}
-
-// ── Social OpenGraph Card (SVG) ────────────────────────────────────────────
-
-function buildOgCardSvg() {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="OMP Pulse — Your coding agent, in your pocket">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0b0d13"/>
-      <stop offset="1" stop-color="#121521"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="78%" cy="22%" r="60%">
-      <stop offset="0" stop-color="#8f76ff" stop-opacity="0.28"/>
-      <stop offset="1" stop-color="#8f76ff" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="pulse" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#b19fff"/>
-      <stop offset="1" stop-color="#755be8"/>
-    </linearGradient>
-  </defs>
-  <rect width="1200" height="630" fill="url(#bg)"/>
-  <rect width="1200" height="630" fill="url(#glow)"/>
-  <rect x="36" y="36" width="1128" height="558" rx="28" fill="none" stroke="#ffffff" stroke-opacity="0.09" stroke-width="2"/>
-
-  <g transform="translate(88, 92)">
-    <rect width="76" height="76" rx="18" fill="#181b26" stroke="#ffffff" stroke-opacity="0.12"/>
-    <path d="M14 40 H26 L31 28 L38 49 L44 36 L48 40 H62" fill="none" stroke="url(#pulse)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="62" cy="40" r="3.5" fill="#b19fff"/>
-  </g>
-
-  <text x="88" y="256" fill="#f3f4f8" font-family="ui-sans-serif, -apple-system, Inter, sans-serif" font-size="64" font-weight="700" letter-spacing="-2">OMP Pulse</text>
-  <text x="88" y="324" fill="#b19fff" font-family="ui-sans-serif, -apple-system, Inter, sans-serif" font-size="34" font-weight="500" letter-spacing="-0.6">Your coding agent, in your pocket.</text>
-  <text x="88" y="392" fill="#9aa2b2" font-family="ui-sans-serif, -apple-system, Inter, sans-serif" font-size="24">Follow, answer and steer omp from your phone,</text>
-  <text x="88" y="428" fill="#9aa2b2" font-family="ui-sans-serif, -apple-system, Inter, sans-serif" font-size="24">or run it on Android with no computer at all.</text>
-
-  <text x="88" y="524" fill="#666f82" font-family="ui-monospace, Menlo, monospace" font-size="20">Free and open source · github.com/${escapeHtml(REPO_SLUG)}</text>
-</svg>
-`;
 }
 
 // ── Build Entrypoint ───────────────────────────────────────────────────────
@@ -971,15 +947,15 @@ export function buildSite(outDir = DIST) {
     "screenshot-ask.png",
     "screenshot-phone-mode.png",
     "screenshot-phone-tools.png",
+    "social-card.png",
   ];
   for (const name of mediaFiles) {
     const src = join(ROOT, "docs/media", name);
     if (!existsSync(src)) {
-      throw new Error(`Missing required media asset: ${relative(ROOT, src)} (run scripts/docs/capture-readme-media.mjs)`);
+      throw new Error(`Missing required media asset: ${relative(ROOT, src)} (run scripts/docs/capture-readme-media.mjs, or scripts/docs/render-social-card.mjs for social-card.png)`);
     }
     copyFileSync(src, join(outDir, "assets/media", name));
   }
-  writeFileSync(join(outDir, "assets/media/og-card.svg"), buildOgCardSvg());
 
   // Landing page + 404 fallback
   writeFileSync(join(outDir, "index.html"), buildLandingPage());

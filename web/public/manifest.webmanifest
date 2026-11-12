@@ -1,7 +1,7 @@
 {
-  "name": "omp-pulse",
-  "short_name": "omp-pulse",
-  "description": "Remote control for a desktop omp coding session: chat with the agent, answer its questions, and get notified when it needs you.",
+  "name": "OMP Pulse",
+  "short_name": "OMP Pulse",
+  "description": "Your coding agent, in your pocket: follow, answer and steer omp from your phone, and get notified when it needs you.",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#000000",
