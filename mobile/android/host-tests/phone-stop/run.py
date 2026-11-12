@@ -71,7 +71,9 @@ def main():
                         str(sources / 'RuntimeStopFixture.java'), str(sources / 'ScopeFixture.java'),
                         str(RUNTIME / 'RuntimeIo.java'), str(RUNTIME / 'Posix.java')], check=True, timeout=90)
         for name in ('com.omppulse.app.runtime.RuntimeStopFixture', 'com.omppulse.app.ScopeFixture'):
-            subprocess.run(['java', '-Djava.io.tmpdir=' + str(out), '-cp', str(out), name], check=True, timeout=60)
+            # -Xrs stops HotSpot 17 from blocking SIGQUIT (thread-dump signal) in its spawn helper,
+            # which dash (/bin/sh on Ubuntu) inherits across exec so FakeProot never receives SIGQUIT.
+            subprocess.run(['java', '-Xrs', '-Djava.io.tmpdir=' + str(out), '-cp', str(out), name], check=True, timeout=60)
 
 
 if __name__ == '__main__':
