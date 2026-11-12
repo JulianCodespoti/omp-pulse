@@ -38,6 +38,7 @@ test("website builds cleanly and all internal links, anchors, and media resolve"
     assert.match(landing, /Run on this phone/);
     assert.match(landing, /Phone tools for the agent/);
     assert.doesNotMatch(landing, /SessionsScreen|all-chats-layer|screenshot-sessions\.png/);
+    assert.doesNotMatch(landing, /\b[\w/]+\.rs\b/, "landing page shows no source file names");
 
     // Validate every href and src across every generated HTML page
     for (const [relPage, html] of pageHtml.entries()) {

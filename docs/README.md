@@ -1,10 +1,11 @@
 # Documentation
 
-Start with the [README](../README.md) to install and pair a phone. Everything
-else is here, by reader.
+Start with [Getting started](user/getting-started.md) to install Pulse and pair
+a phone. Everything else is here, by reader.
 
 ## For users
 
+- [Getting started](user/getting-started.md): install Pulse, pair your phone and start your first conversation.
 - [Configuration and operation](user/configuration.md): commands, `config.toml`, environment variables, files, platform support, troubleshooting.
 - [Networking](user/networking.md): reaching the daemon from a phone (Tailscale, Cloudflare Tunnel, LAN) and why HTTPS matters.
 - [Windows](user/windows.md): setup on Windows and what is degraded there.
