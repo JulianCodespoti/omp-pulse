@@ -1,0 +1,461 @@
+package com.omppulse.app;
+
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.IOException;
+import java.net.SocketTimeoutException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+final class LoopFixture {
+    private static final String TAG = "fixture";
+    private static final String STREAM_PATH = "/fixture";
+    private static final int PING_TIMEOUT_MS = 60000;
+    private final Handler mainHandler = new Handler();
+    private static boolean stallHeaders;
+    private static boolean unboundedRead;
+    private final List<Long> elapsedSleeps = new ArrayList<>();
+    private final List<Runnable> posted = new ArrayList<>();
+    private int latestStartId = 7;
+    private int stoppedWith = -1;
+    private int threadStarts;
+    private static final class Handler {
+        void post(Runnable runnable) { active.posted.add(runnable); }
+    }
+    private void startSseThread() { threadStarts++; sseThread = new Thread(); }
+    private boolean stopSelfResult(int startId) { stoppedWith = startId; return true; }
+    // Live-turn-status entry points: Android notification/widget work, outside the retry policy.
+    private void onStreamOpened() {}
+    private void onProgressEvent(JSONObject payload) {}
+    private static void advanceTo(long target) { now = target; }
+    private static final long INITIAL_BACKOFF_MS = 1000;
+    private static final long MAX_BACKOFF_MS = 30000;
+    private final AtomicBoolean shouldRun = new AtomicBoolean(true);
+    private String lastEventId;
+    private long lastEventMillis;
+    private static long sLastEventAt;
+    private static boolean sConnected;
+    private static String sLastError;
+    private static int sLastHttpStatus;
+    private HttpURLConnection currentConn;
+    private Thread sseThread = new Thread();
+    private final List<Long> sleeps = new ArrayList<>();
+    private final List<String> events = new ArrayList<>();
+    private final List<String> savedIds = new ArrayList<>();
+    private final List<HttpURLConnection> connections = new ArrayList<>();
+    private final List<Attempt> attempts;
+    private int opened;
+    private boolean unexpectedAttempt;
+    private static LoopFixture active;
+    private static long now;
+    private static int passes;
+    private static int regressions;
+
+    private LoopFixture(Attempt... attempts) { this.attempts = Arrays.asList(attempts); }
+    private String apiBaseUrl() { return "fixture-only"; }
+    private final FakeRandom jitter = new FakeRandom();
+    private static int jitterValue;
+    private static boolean interruptSleep;
+    private static boolean postFailure;
+    private static long postDelay;
+    private static boolean missingToken;
+    private static String wakeReason;
+    private static final class FakeRandom {
+        int nextInt(int bound) {
+            if (bound != 700) throw new AssertionError("jitter bound changed");
+            return jitterValue;
+        }
+    }
+    private static final class Thread {
+        private static boolean interrupted;
+        static boolean interrupted() { boolean result = interrupted; interrupted = false; return result; }
+        static Thread currentThread() { return active.sseThread; }
+        void interrupt() { interrupted = true; }
+        static void sleep(long ms) throws InterruptedException {
+            active.sleeps.add(ms);
+            long started = now;
+            advanceTo(now + ms);
+            active.elapsedSleeps.add(now - started);
+            if (wakeReason != null) active.reconnectNow(wakeReason);
+            if (active.opened == active.attempts.size()) active.shouldRun.set(false);
+            if (interruptSleep || interrupted) throw new InterruptedException("synthetic wake");
+        }
+    }
+    // JSON is a narrow platform boundary here, not a substitute Android parser.
+    // Matrix payloads are deliberately limited to an object and invalid shapes.
+    private static final class JSONObject {
+        final String data;
+        JSONObject(String data) {
+            if (!"{}".equals(data)) throw new IllegalArgumentException("synthetic invalid object");
+            this.data = data;
+        }
+    }
+    private static final class NotificationHelper {
+        static void postFromPayload(LoopFixture fixture, JSONObject object) {
+            fixture.events.add(object.data);
+            now += postDelay;
+            if (postFailure) throw new IllegalStateException("synthetic posting failure");
+        }
+    }
+
+    // EXACT_SOURCE_METHODS
+
+    private record Frame(long elapsed, String line) {}
+    private record Attempt(int code, boolean bodyFailure, boolean connectFailure,
+                           boolean readFailure, boolean stopAtEof, Frame... frames) {
+        static Attempt eof() { return new Attempt(200, false, false, false, false); }
+        static Attempt http(int code) { return new Attempt(code, false, false, false, false); }
+    }
+    private static final class SystemClock { static long elapsedRealtime() { return now; } }
+    private static final class TokenStore {
+        static String getToken(LoopFixture owner) { return missingToken ? null : "synthetic-credential"; }
+        static void saveLastEventId(LoopFixture owner, String id) { owner.savedIds.add(id); }
+    }
+    private static final class Log {
+        static void i(String tag, String message) {}
+        static void w(String tag, String message) {}
+        static void w(String tag, String message, Throwable error) {}
+    }
+    // Intentionally unrelated to java.net.URL: cannot perform any network I/O.
+    private static final class URL {
+        URL(String ignored) {}
+        Object openConnection() {
+            if (active.opened >= active.attempts.size()) {
+                // sseLoop catches Throwable, so also stop and retain evidence.
+                active.unexpectedAttempt = true;
+                active.shouldRun.set(false);
+                throw new AssertionError("unexpected extra connection attempt");
+            }
+            Attempt attempt = active.attempts.get(active.opened++);
+            HttpURLConnection conn = new HttpURLConnection(attempt);
+            active.connections.add(conn);
+            return conn;
+        }
+    }
+    private static final class HttpURLConnection {
+        final Attempt attempt;
+        final long openedAt = now;
+        final Map<String, String> headers = new HashMap<>();
+        boolean disconnected;
+        final List<Long> disconnectTimes = new ArrayList<>();
+        HttpURLConnection(Attempt attempt) { this.attempt = attempt; }
+        void setRequestMethod(String ignored) {}
+        void setRequestProperty(String key, String value) { headers.put(key, value); }
+        void setInstanceFollowRedirects(boolean ignored) {}
+        int connectTimeout;
+        int readTimeout;
+        void setConnectTimeout(int ms) { connectTimeout = ms; }
+        void setReadTimeout(int ms) { readTimeout = ms; }
+        void setUseCaches(boolean ignored) {}
+        int getResponseCode() throws IOException {
+            if (stallHeaders && attempt.code == 200) {
+                // The server accepted the socket but never answers. Only the
+                // read timeout bounds this; without one the attempt hangs.
+                if (readTimeout <= 0) {
+                    unboundedRead = true;
+                    active.shouldRun.set(false);
+                    throw new IOException("synthetic header read without timeout");
+                }
+                advanceTo(now + readTimeout);
+                throw new SocketTimeoutException("synthetic header read timeout");
+            }
+            if (attempt.connectFailure) throw new IOException("synthetic connect failure");
+            return attempt.code;
+        }
+        InputStream getInputStream() throws IOException {
+            if (attempt.bodyFailure) throw new IOException("synthetic body-open failure");
+            return InputStream.nullInputStream();
+        }
+        InputStream getErrorStream() { return InputStream.nullInputStream(); }
+        void disconnect() { disconnected = true; disconnectTimes.add(now); }
+    }
+    private static final class BufferedReader implements AutoCloseable {
+        private int next;
+        private final HttpURLConnection conn = active.currentConn;
+        // When the last byte arrived; the read timeout bounds the gap after it.
+        private long lastByte = now;
+        BufferedReader(InputStreamReader ignored) {}
+        String readLine() throws IOException, InterruptedException {
+            if (next < conn.attempt.frames.length) {
+                Frame frame = conn.attempt.frames[next];
+                long arrives = conn.openedAt + frame.elapsed;
+                if (conn.readTimeout > 0 && arrives - lastByte > conn.readTimeout) {
+                    advanceTo(lastByte + conn.readTimeout);
+                    throw new SocketTimeoutException("synthetic body read timeout");
+                }
+                next++;
+                advanceTo(arrives);
+                lastByte = now;
+                if ("__WAKE_THROW__".equals(frame.line)) {
+                    active.reconnectNow("screen-on");
+                    throw new IOException("synthetic interrupted transport");
+                }
+                if ("__STOP_THROW__".equals(frame.line)) {
+                    active.shouldRun.set(false);
+                    throw new IOException("synthetic stopped transport");
+                }
+                return frame.line;
+            }
+            if (conn.attempt.readFailure) throw new IOException("synthetic read failure");
+            if (conn.attempt.stopAtEof) active.shouldRun.set(false);
+            return null;
+        }
+        @Override public void close() {}
+    }
+    private static LoopFixture run(Attempt... attempts) {
+        LoopFixture fixture = new LoopFixture(attempts);
+        active = fixture;
+        now = 100000;
+        Thread.interrupted = false;
+        unboundedRead = false;
+        fixture.lastEventMillis = now;
+        fixture.sseLoop();
+        if (unboundedRead) throw new AssertionError("stream read has no timeout");
+        if (fixture.connections.stream().anyMatch(c -> c.readTimeout != PING_TIMEOUT_MS || c.connectTimeout != 15000)) {
+            throw new AssertionError("stream timeouts changed");
+        }
+        if (!missingToken && !fixture.posted.isEmpty()) throw new AssertionError("paired loop posted a stop");
+        if (fixture.unexpectedAttempt || fixture.opened != attempts.length) throw new AssertionError("attempt count");
+        if (fixture.connections.stream().anyMatch(c -> !c.disconnected)) throw new AssertionError("connection not closed");
+        if (sConnected || fixture.currentConn != null) throw new AssertionError("connection state leaked");
+        return fixture;
+    }
+    private static void delays(String name, boolean regression, LoopFixture fixture, Long... expected) {
+        if (fixture.sleeps.equals(Arrays.asList(expected))) {
+            passes++;
+            System.out.println("PASS " + name + " " + fixture.sleeps);
+        } else if (regression) {
+            regressions++;
+            System.out.println("EXPECTED_BASELINE_FAILURE " + name + " actual=" + fixture.sleeps + " expected=" + Arrays.asList(expected));
+        } else {
+            throw new AssertionError(name + " actual=" + fixture.sleeps + " expected=" + Arrays.asList(expected));
+        }
+    }
+    private static Attempt[] repeat(Attempt attempt) {
+        Attempt[] sequence = new Attempt[7];
+        Arrays.fill(sequence, attempt);
+        return sequence;
+    }
+    public static void main(String[] args) {
+        Long[] capped = {1000L, 2000L, 4000L, 8000L, 16000L, 30000L, 30000L};
+        delays("200+EOF", true, run(repeat(Attempt.eof())), capped);
+        delays("200+body-open failure", true, run(repeat(new Attempt(200, true, false, false, false))), capped);
+        delays("200+read failure", true, run(repeat(new Attempt(200, false, false, true, false))), capped);
+        delays("401", false, run(repeat(Attempt.http(401))), capped);
+        delays("403", false, run(repeat(Attempt.http(403))), capped);
+        delays("503", false, run(repeat(Attempt.http(503))), capped);
+        delays("connect failure", false, run(repeat(new Attempt(0, false, true, false, false))), capped);
+        delays("stop at EOF", false, run(new Attempt(200, false, false, false, true)));
+        Attempt replay = new Attempt(200, false, false, false, false,
+            new Frame(0, "id: fixture-id"), new Frame(0, "event: notify"),
+            new Frame(0, "data: {}"), new Frame(0, ""));
+        LoopFixture fixture = run(repeat(replay));
+        delays("immediate replay then EOF", true, fixture, capped);
+        if (fixture.events.size() != 7 || fixture.savedIds.size() != 7
+            || !"fixture-id".equals(fixture.connections.get(1).headers.get("Last-Event-ID"))) {
+            throw new AssertionError("replay/dispatch control");
+        }
+        passes++;
+        System.out.println("PASS replay dispatch and cursor/header controls");
+        System.out.println("SUMMARY passing_controls=" + passes + " baseline_regressions=" + regressions);
+        boolean candidate = args.length > 0 && "candidate".equals(args[0]);
+        if (regressions != (candidate ? 0 : 4)) throw new AssertionError("unexpected regression count");
+        if (candidate) candidateChecks();
+    }
+
+    private static Attempt frame(long time, String event, String data, boolean readFailure) {
+        return new Attempt(200, false, false, readFailure, false,
+            new Frame(time, "id: healthy-id"), new Frame(time, "event: " + event),
+            new Frame(time, "data: " + data), new Frame(time, ""));
+    }
+    private static void afterFailures(String name, Attempt last, long expected) {
+        delays(name, false, run(Attempt.http(503), Attempt.http(503), last), 1000L, 2000L, expected);
+    }
+    private static void candidateChecks() {
+        afterFailures("ping at threshold", frame(25000, "ping", "{}", false), 1000);
+        afterFailures("ping before threshold", frame(24999, "ping", "{}", false), 4000);
+        afterFailures("notify at threshold", frame(25000, "notify", "{}", false), 1000);
+        afterFailures("healthy then read exception", frame(25000, "ping", "{}", true), 1000);
+        afterFailures("default data event", new Attempt(200, false, false, false, false,
+            new Frame(25000, "data: {}"), new Frame(25000, "")), 1000);
+        afterFailures("unknown event", frame(25000, "unknown", "{}", false), 4000);
+        afterFailures("invalid ping JSON", frame(25000, "ping", "broken", false), 4000);
+        afterFailures("invalid notify JSON", frame(25000, "notify", "broken", false), 4000);
+        afterFailures("array payload", frame(25000, "notify", "[]", false), 4000);
+        afterFailures("empty envelope", new Attempt(200, false, false, false, false, new Frame(25000, "")), 4000);
+        afterFailures("incomplete data", new Attempt(200, false, false, false, false,
+            new Frame(25000, "event: ping"), new Frame(25000, "data: {}")), 4000);
+        afterFailures("comment at threshold", new Attempt(200, false, false, false, false, new Frame(25000, ": keepalive")), 1000);
+        afterFailures("comment before threshold", new Attempt(200, false, false, false, false, new Frame(24999, ": keepalive")), 4000);
+        delays("new open restarts health measurement", false,
+            run(Attempt.http(503), Attempt.http(503), frame(25000, "ping", "{}", false),
+                frame(0, "ping", "{}", false)), 1000L, 2000L, 1000L, 2000L);
+        postFailure = true;
+        afterFailures("notification posting failure still proves stream health", frame(25000, "notify", "{}", false), 1000);
+        postFailure = false;
+        LoopFixture ping = run(frame(25000, "ping", "{}", false));
+        if (!ping.events.isEmpty()) throw new AssertionError("ping posted notification");
+        passes++;
+        System.out.println("PASS ping remains transport-only");
+        jitterValue = 699;
+        delays("actual sleeper maximum jitter", false, run(Attempt.eof()), 1699L);
+        jitterValue = 0;
+        interruptSleep = true;
+        delays("actual sleeper interrupted wake", false, run(Attempt.eof(), Attempt.eof()), 1000L, 2000L);
+        if (!Thread.interrupted) throw new AssertionError("sleep did not restore interrupt flag");
+        passes++;
+        System.out.println("PASS sleeper preserves interrupt flag");
+        interruptSleep = false;
+        for (String reason : new String[] {"network-available", "screen-on", "token-change", "default-network-lost"}) {
+            wakeReason = reason;
+            delays("actual reconnectNow during sleep " + reason, false,
+                run(Attempt.eof(), Attempt.eof()), 1000L, 2000L);
+        }
+        wakeReason = null;
+        additionalControls();
+        readTimeoutControls();
+        System.out.println("CANDIDATE_TOTAL_PASS " + passes);
+    }
+
+    private static void additionalControls() {
+        postDelay = 30000;
+        afterFailures("slow local posting is not stream duration", frame(0, "notify", "{}", false), 4000);
+        postDelay = 0;
+        Attempt wakes = new Attempt(200, false, false, false, false,
+            new Frame(1000, "__WAKE_THROW__"));
+        delays("interrupted read preserves failure streak", false,
+            run(Attempt.http(503), Attempt.http(503), wakes, Attempt.eof()), 1000L, 2000L, 4000L);
+        delays("stop during read skips sleep and reconnect", false,
+            run(new Attempt(200, false, false, false, false, new Frame(1000, "__STOP_THROW__"))));
+        delays("old early replay cannot qualify through successor age", false,
+            run(Attempt.http(503), frame(0, "notify", "{}", false), frame(0, "ping", "{}", false)),
+            1000L, 2000L, 4000L);
+        afterFailures("read timeout before any envelope stays unhealthy", new Attempt(200, false, false, false, false,
+            new Frame(90000, "")), 4000);
+        LoopFixture unknown = run(frame(25000, "unknown", "{}", false), Attempt.eof());
+        if (!unknown.events.isEmpty() || !unknown.savedIds.equals(List.of("healthy-id"))
+                || !"healthy-id".equals(unknown.connections.get(1).headers.get("Last-Event-ID"))) {
+            throw new AssertionError("unknown event replay semantics changed");
+        }
+        passes++;
+        System.out.println("PASS unknown event preserves existing replay cursor semantics");
+        LoopFixture malformed = run(frame(25000, "notify", "broken", false), Attempt.eof());
+        if (!malformed.events.isEmpty() || !malformed.savedIds.equals(List.of("healthy-id"))
+                || !"healthy-id".equals(malformed.connections.get(1).headers.get("Last-Event-ID"))) {
+            throw new AssertionError("malformed event replay semantics changed");
+        }
+        passes++;
+        System.out.println("PASS malformed event preserves existing replay cursor semantics");
+        missingToken = true;
+        delays("missing token stops instead of polling", false, run());
+        missingToken = false;
+        jitterValue = 699;
+        delays("capped delay retains maximum jitter", false, run(repeat(Attempt.eof())),
+            1699L, 2699L, 4699L, 8699L, 16699L, 30699L, 30699L);
+        jitterValue = 0;
+    }
+
+    private static void require(boolean condition, String name) {
+        if (!condition) throw new AssertionError(name);
+        passes++;
+        System.out.println("PASS " + name);
+    }
+    /**
+     * The stream's liveness bound is the socket read timeout, not a timer: a
+     * 15 s Handler watchdog used to wake the app for the service's whole life.
+     * A timeout must take the same failure, backoff and reconnect path that
+     * any other transport error takes.
+     */
+    private static void readTimeoutControls() {
+        List<Long> capped = List.of(1000L, 2000L, 4000L, 8000L, 16000L, 30000L, 30000L);
+        for (Attempt attempt : new Attempt[] {Attempt.http(401), Attempt.http(403), Attempt.http(503),
+                Attempt.eof(), new Attempt(0, false, true, false, false),
+                new Attempt(200, true, false, false, false), new Attempt(200, false, false, true, false)}) {
+            LoopFixture fixture = run(repeat(attempt));
+            require(fixture.elapsedSleeps.equals(capped), "read timeout preserves actual retry delays " + attempt);
+            require(now == 191000, "retry attempts traverse 91 seconds without early wake");
+            long expected = 100000;
+            for (int i = 0; i < fixture.connections.size(); i++) {
+                require(fixture.connections.get(i).openedAt == expected, "actual attempt start " + i);
+                expected += capped.get(i);
+                require(fixture.connections.get(i).disconnectTimes.equals(List.of(expected)),
+                        "failed attempt is closed only at ordinary cleanup " + i);
+            }
+        }
+        LoopFixture longThenEof = run(Attempt.http(503), Attempt.http(503), Attempt.http(503),
+                Attempt.http(503), Attempt.http(503),
+                new Attempt(200, false, false, false, false, new Frame(50000, "data: partial")));
+        require(longThenEof.connections.get(5).disconnectTimes.equals(List.of(211000L))
+                && longThenEof.elapsedSleeps.equals(List.of(1000L, 2000L, 4000L, 8000L, 16000L, 30000L)),
+                "long unqualified EOF retains capped backoff");
+        stallHeaders = true;
+        LoopFixture headers = run(Attempt.http(200));
+        require(headers.elapsedSleeps.equals(List.of(1000L))
+                && headers.connections.get(0).disconnectTimes.equals(List.of(161000L)),
+                "stalled headers time out at 60 seconds and close at ordinary cleanup");
+        require(sLastError != null && sLastError.startsWith("SocketTimeoutException"),
+                "header timeout is reported like any transport error");
+        LoopFixture staggered = run(Attempt.http(503), Attempt.http(200));
+        require(staggered.elapsedSleeps.equals(List.of(1000L, 2000L))
+                && staggered.connections.get(1).disconnectTimes.equals(List.of(163000L)),
+                "header timeout measures from its own attempt and advances the backoff");
+        LoopFixture repeated = run(repeat(Attempt.http(200)));
+        require(repeated.elapsedSleeps.equals(List.of(1000L, 2000L, 4000L, 8000L, 16000L, 30000L, 30000L)),
+                "repeated timeouts follow the capped backoff");
+        stallHeaders = false;
+        LoopFixture body = run(new Attempt(200, false, false, false, false, new Frame(75000, "ignored")));
+        require(body.elapsedSleeps.equals(List.of(1000L)) && body.events.isEmpty()
+                && body.connections.get(0).disconnectTimes.equals(List.of(161000L)),
+                "stalled body times out at 60 seconds and backs off");
+        LoopFixture healthy = run(Attempt.http(503), Attempt.http(503), new Attempt(200, false, false, false, false,
+                new Frame(25000, "id: healthy-id"), new Frame(25000, "event: ping"),
+                new Frame(25000, "data: {}"), new Frame(25000, ""), new Frame(85001, "late")));
+        require(healthy.elapsedSleeps.equals(List.of(1000L, 2000L, 1000L)),
+                "timeout after a healthy stream retries from the reset delay");
+        LoopFixture boundary = run(new Attempt(200, false, false, false, true,
+                new Frame(25000, ": keepalive"), new Frame(85000, ": keepalive")));
+        require(boundary.sleeps.isEmpty(), "a byte exactly at the timeout keeps the stream");
+        LoopFixture longLived = run(new Attempt(200, false, false, false, true,
+                new Frame(25000, ": keepalive"), new Frame(50000, ": keepalive"),
+                new Frame(75000, ": keepalive"), new Frame(100000, ": keepalive")));
+        require(longLived.sleeps.isEmpty() && now == 200000,
+                "pings under the timeout keep one stream open past 60 seconds");
+        LoopFixture later = run(Attempt.http(503), frame(25000, "ping", "{}", false), Attempt.eof());
+        require(later.elapsedSleeps.equals(List.of(1000L, 1000L, 2000L)), "later healthy stream still resets retry");
+        missingToken = true;
+        LoopFixture unpaired = run();
+        require(unpaired.sleeps.isEmpty() && unpaired.connections.isEmpty() && unpaired.posted.size() == 1
+                && unpaired.stoppedWith == -1, "unpaired loop exits at once and defers the stop to the main thread");
+        unpaired.posted.get(0).run();
+        require(unpaired.stoppedWith == 7 && unpaired.sseThread == null && unpaired.threadStarts == 0,
+                "still unpaired: stops only up to the newest start request");
+        LoopFixture raced = run();
+        missingToken = false;
+        raced.posted.get(0).run();
+        require(raced.threadStarts == 1 && raced.stoppedWith == -1,
+                "token delivered while the loop exited restarts it instead of stopping");
+        missingToken = true;
+        LoopFixture replaced = run();
+        replaced.sseThread = new Thread();
+        replaced.posted.get(0).run();
+        require(replaced.threadStarts == 0 && replaced.stoppedWith == -1,
+                "a newer loop started by onStartCommand is left alone");
+        LoopFixture destroyed = run();
+        destroyed.shouldRun.set(false);
+        destroyed.posted.get(0).run();
+        require(destroyed.threadStarts == 0 && destroyed.stoppedWith == -1, "a destroyed service is not stopped twice");
+        missingToken = false;
+
+        LoopFixture f = new LoopFixture(); active = f;
+        for (String reason : new String[] {"network-available", "screen-on", "token-changed", "stop"}) {
+            Thread.interrupted = false; f.reconnectNow(reason);
+            require(Thread.interrupted, "explicit recovery retains interrupt " + reason);
+        }
+        Thread.interrupted = false;
+    }
+}

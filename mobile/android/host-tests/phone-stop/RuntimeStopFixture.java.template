@@ -1,0 +1,298 @@
+package com.omppulse.app.runtime;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Stop/resume of the on-device runtime. The mode persistence, the daemon signalling and the
+ * supervisor's shutdown are the production source, extracted verbatim; the tests below drive them
+ * against fake preferences and REAL subprocesses that behave like proot 5.1.107.96: they ignore
+ * SIGTERM and kill their guest only on SIGQUIT (src/tracee/event.c event_loop).
+ */
+final class RuntimeStopFixture {
+    private static int checks;
+
+    static final class BuildConfig {
+        static String OMP_PULSE_SERVER_URL = "";
+    }
+
+    static final class Log {
+        static void w(String tag, String message) {}
+    }
+
+    static final class RuntimePaths {
+        static final String GUEST_OMP_PULSE_LINK = "/opt/pulse/libomppulse.so";
+    }
+
+    static final class SystemClock {
+        static long elapsedRealtime() { return System.nanoTime() / 1_000_000L; }
+    }
+
+    /** Preferences file that outlives LocalRuntime instances, like the real one outlives the app process. */
+    static final class Store {
+        final Map<String, String> values = new HashMap<>();
+    }
+
+    static final class SharedPreferences {
+        private final Store store;
+        SharedPreferences(Store store) { this.store = store; }
+        String getString(String key, String fallback) {
+            String v = store.values.get(key);
+            return v == null ? fallback : v;
+        }
+        Editor edit() { return new Editor(store); }
+        static final class Editor {
+            private final Store store;
+            Editor(Store store) { this.store = store; }
+            Editor putString(String key, String value) { store.values.put(key, value); return this; }
+            boolean commit() { return true; }
+        }
+    }
+
+    static final class LocalRuntime {
+        private static final String TAG = "fixture";
+        private static final String KEY_MODE = "mode";
+        // EXACT_CONSTANTS
+        private final Store store;
+        private final File proot;
+        private final RuntimePathsView paths = new RuntimePathsView();
+
+        final class RuntimePathsView {
+            File proot() { return proot; }
+        }
+
+        LocalRuntime(Store store, File proot) {
+            this.store = store;
+            this.proot = proot;
+        }
+
+        private SharedPreferences modePrefs() { return new SharedPreferences(store); }
+
+        // EXACT_MODE_ENUM
+        // EXACT_MODE_METHODS
+        // EXACT_SIGNAL_METHODS
+    }
+
+    static final class LocalPulseService {
+        // EXACT_SHUTDOWN_CONSTANT
+        // EXACT_SHUTDOWN_METHODS
+        static void shutdown(LocalRuntime rt, Process p, boolean allGuests) { shutdownDaemon(rt, p, allGuests); }
+    }
+
+    private static void check(boolean condition, String what) {
+        checks++;
+        if (!condition) throw new AssertionError(what);
+    }
+
+    private static boolean dead(long pid) {
+        try {
+            String stat = new String(Files.readAllBytes(new File("/proc/" + pid + "/stat").toPath()));
+            return stat.substring(stat.lastIndexOf(')') + 2).startsWith("Z");
+        } catch (IOException e) {
+            return true;
+        }
+    }
+
+    private static boolean eventually(java.util.function.BooleanSupplier condition, long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (!condition.getAsBoolean()) {
+            if (System.currentTimeMillis() > deadline) return false;
+            Thread.sleep(20);
+        }
+        return true;
+    }
+
+    // ---- mode persistence ----
+
+    private static void modeSurvivesReopenEvenWithBakedServer() {
+        BuildConfig.OMP_PULSE_SERVER_URL = "https://pc.example.ts.net/app/";
+        Store store = new Store();
+        check(new LocalRuntime(store, null).mode() == LocalRuntime.Mode.LAPTOP, "never-configured baked build defaults to the baked computer");
+        new LocalRuntime(store, null).setMode(LocalRuntime.Mode.PHONE);
+        check(new LocalRuntime(store, null).mode() == LocalRuntime.Mode.PHONE, "phone choice persists");
+        new LocalRuntime(store, null).setMode(LocalRuntime.Mode.UNSET);
+        check(new LocalRuntime(store, null).mode() == LocalRuntime.Mode.UNSET, "explicit stop persists across reopen/reboot in a baked build");
+        new LocalRuntime(store, null).setMode(LocalRuntime.Mode.PHONE);
+        check(new LocalRuntime(store, null).mode() == LocalRuntime.Mode.PHONE, "Run on this phone resumes after stop");
+        BuildConfig.OMP_PULSE_SERVER_URL = "";
+        Store fresh = new Store();
+        check(new LocalRuntime(fresh, null).mode() == LocalRuntime.Mode.UNSET, "public build starts unset");
+        new LocalRuntime(fresh, null).setMode(LocalRuntime.Mode.UNSET);
+        check(new LocalRuntime(fresh, null).mode() == LocalRuntime.Mode.UNSET, "unset stays unset");
+    }
+
+    // ---- which processes are signalled ----
+
+    private static void signalsOnlyWhatEachScopeSelects() throws IOException {
+        Path proc = Files.createTempDirectory("fake-proc");
+        File proot = new File("/data/app/lib/arm64/libproot.so");
+        long self = ProcessHandle.current().pid();
+        Map<String, String> cmdlines = new java.util.LinkedHashMap<>();
+        cmdlines.put("101", proot.getPath() + "\0--kill-on-exit\0-r\0/rootfs\0/usr/bin/env\0-i\0omp-pulse\0serve\0--bind\0127.0.0.1");
+        cmdlines.put("102", RuntimePaths.GUEST_OMP_PULSE_LINK + "\0serve\0--bind\0127.0.0.1");
+        cmdlines.put("103", "/bin/foreign\0serve");
+        cmdlines.put("104", proot.getPath() + "\0--kill-on-exit\0-r\0/rootfs\0/usr/bin/env\0-i\0omp\0login\0anthropic");
+        cmdlines.put("106", "/other/libproot.so\0--kill-on-exit\0-r\0/other\0/bin/sh");
+        cmdlines.put(String.valueOf(self), proot.getPath() + "\0serve");
+        cmdlines.put("notapid", proot.getPath() + "\0serve");
+        for (Map.Entry<String, String> e : cmdlines.entrySet()) {
+            Path dir = Files.createDirectory(proc.resolve(e.getKey()));
+            Files.write(dir.resolve("cmdline"), (e.getValue() + "\0").getBytes());
+        }
+        Files.createDirectory(proc.resolve("105")); // process that vanished: no cmdline
+        List<String> sent = new ArrayList<>();
+        android.os.Process.hook = (pid, signal) -> sent.add(pid + ":" + signal);
+        LocalRuntime rt = new LocalRuntime(new Store(), proot);
+        check(rt.signalGuest(proc.toFile(), true, false), "daemons found");
+        check(sent.equals(Arrays.asList("101:3", "102:9")),
+                "serve-only: proot gets SIGQUIT first, the guest daemon SIGKILL, the sign-in is left alone: " + sent);
+        sent.clear();
+        check(rt.signalGuest(proc.toFile(), false, true) && sent.equals(List.of("104:3")),
+                "commands-only: just the other proot of this runtime, never a foreign proot: " + sent);
+        sent.clear();
+        check(rt.signalGuest(proc.toFile(), true, true), "everything found");
+        check(sent.size() == 3 && sent.indexOf("102:9") == 2 && sent.containsAll(List.of("101:3", "104:3", "102:9")),
+                "all guests: both prootss SIGQUIT before the guest daemon SIGKILL: " + sent);
+        sent.clear();
+        check(!rt.signalGuest(Files.createTempDirectory("empty-proc").toFile(), true, true) && sent.isEmpty(), "nothing running, no signal");
+        android.os.Process.hook = null;
+    }
+
+    // ---- real processes ----
+
+    private static final class FakeProot {
+        final Process process;
+        final long child;
+        final File file;
+
+        FakeProot(Path dir, String name) throws IOException, InterruptedException {
+            this(dir, name, "serve");
+        }
+
+        /** Several fake prootss may share one native path, like the daemon and a sign-in do. */
+        FakeProot(Path dir, String name, String role) throws IOException, InterruptedException {
+            file = dir.resolve(name).toFile();
+            if (!file.exists()) Files.createSymbolicLink(file.toPath(), new File("/bin/sh").toPath());
+            File pidFile = dir.resolve(name + "." + role + ".child").toFile();
+            // Like proot: SIGTERM ignored; SIGQUIT kills every tracee, then exits. The guest is a
+            // separate process that is not the proot's own group member's concern on SIGKILL.
+            String script = "trap '' TERM; trap 'kill -9 $c; exit 3' QUIT; sleep 1000 & c=$!; echo $c > " + pidFile + "; wait";
+            process = new ProcessBuilder(file.getPath(), "-c", script, "proot", role).redirectErrorStream(true).start();
+            check(eventually(pidFile::isFile, 5000), "fake proot started its guest");
+            check(eventually(() -> {
+                try { return !Files.readString(pidFile.toPath()).trim().isEmpty(); } catch (IOException e) { return false; }
+            }, 5000), "guest pid written");
+            child = Long.parseLong(Files.readString(pidFile.toPath()).trim());
+        }
+
+        void cleanup() {
+            process.destroyForcibly();
+            try { new ProcessBuilder("kill", "-9", String.valueOf(child)).start().waitFor(); } catch (Exception ignored) { }
+        }
+    }
+
+    private static void oldDestroyOrphansTheGuest(Path dir) throws Exception {
+        FakeProot daemon = new FakeProot(dir, "libproot-old.so");
+        try {
+            daemon.process.destroy(); // SIGTERM: what Process.destroy() sends; proot ignores it
+            Thread.sleep(300);
+            check(daemon.process.isAlive(), "proot ignores SIGTERM");
+            daemon.process.destroyForcibly(); // SIGKILL: proot cannot clean up, guest detaches
+            daemon.process.waitFor();
+            Thread.sleep(300);
+            check(!dead(daemon.child), "control: SIGKILL on proot leaves the guest running (why destroy() alone is not enough)");
+        } finally {
+            daemon.cleanup();
+        }
+    }
+
+    private static void shutdownStopsProotAndGuestPromptly(Path dir, boolean interruptedStop) throws Exception {
+        FakeProot daemon = new FakeProot(dir, interruptedStop ? "libproot-int.so" : "libproot-new.so");
+        android.os.Process.hook = (pid, signal) -> {
+            try { new ProcessBuilder("kill", "-" + signal, String.valueOf(pid)).start().waitFor(); }
+            catch (Exception e) { throw new AssertionError(e); }
+        };
+        try {
+            LocalRuntime rt = new LocalRuntime(new Store(), daemon.file);
+            long start = System.nanoTime();
+            boolean[] interruptKept = {false};
+            Thread worker = new Thread(() -> {
+                // onDestroy interrupts the supervisor thread before its finally block runs.
+                if (interruptedStop) Thread.currentThread().interrupt();
+                LocalPulseService.shutdown(rt, daemon.process, false);
+                interruptKept[0] = Thread.currentThread().isInterrupted();
+            }, "fixture-supervisor");
+            worker.start();
+            worker.join(10_000);
+            check(!worker.isAlive(), "shutdown returns");
+            check(interruptKept[0] == interruptedStop, "interrupt status preserved for the caller");
+            long ms = (System.nanoTime() - start) / 1_000_000L;
+            check(!daemon.process.isAlive(), "proot exited");
+            check(eventually(() -> dead(daemon.child), 3000), "guest killed with proot, not orphaned");
+            check(ms < 2500, "shutdown did not wait out its bound: " + ms + " ms");
+        } finally {
+            android.os.Process.hook = null;
+            daemon.cleanup();
+        }
+    }
+
+    /**
+     * Daemon and a sign-in each run in their own proot of the same native path. A restart or a switch
+     * keeps the sign-in; an explicit stop to unset, even with no daemon process of the supervisor's
+     * own to wait for (stopped during install), ends both with their guests.
+     */
+    private static void explicitStopAlsoEndsSignInOthersKeepIt(Path dir, boolean explicitStop) throws Exception {
+        String name = explicitStop ? "libproot-stop.so" : "libproot-keep.so";
+        FakeProot daemon = new FakeProot(dir, name, "serve");
+        FakeProot login = new FakeProot(dir, name, "login");
+        android.os.Process.hook = (pid, signal) -> {
+            try { new ProcessBuilder("kill", "-" + signal, String.valueOf(pid)).start().waitFor(); }
+            catch (Exception e) { throw new AssertionError(e); }
+        };
+        try {
+            LocalRuntime rt = new LocalRuntime(new Store(), daemon.file);
+            Thread worker = new Thread(() -> LocalPulseService.shutdown(rt, explicitStop ? null : daemon.process, explicitStop),
+                    "fixture-supervisor");
+            worker.start();
+            worker.join(10_000);
+            check(!worker.isAlive(), "shutdown returns");
+            check(eventually(() -> !daemon.process.isAlive() && dead(daemon.child), 3000), "daemon and its guest are gone");
+            if (explicitStop) {
+                check(eventually(() -> !login.process.isAlive() && dead(login.child), 3000), "explicit stop ends the sign-in and its guest");
+            } else {
+                Thread.sleep(300);
+                check(login.process.isAlive() && !dead(login.child), "a daemon restart or switch keeps the sign-in");
+            }
+        } finally {
+            android.os.Process.hook = null;
+            daemon.cleanup();
+            login.cleanup();
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        modeSurvivesReopenEvenWithBakedServer();
+        signalsOnlyWhatEachScopeSelects();
+        // The subprocess proofs need Linux: /proc/<pid>/{cmdline,stat}, /bin/sh and kill(1).
+        boolean linux = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("linux")
+                && new File("/proc/self/cmdline").isFile() && new File("/bin/sh").canExecute();
+        if (!linux) {
+            System.out.println("SKIP real-process shutdown proofs: need Linux (/proc, /bin/sh, kill)");
+        } else {
+            Path dir = Files.createTempDirectory("fake-proot");
+            oldDestroyOrphansTheGuest(dir);
+            shutdownStopsProotAndGuestPromptly(dir, false);
+            shutdownStopsProotAndGuestPromptly(dir, true);
+            explicitStopAlsoEndsSignInOthersKeepIt(dir, false);
+            explicitStopAlsoEndsSignInOthersKeepIt(dir, true);
+        }
+        System.out.println("RuntimeStopFixture ok (" + checks + " checks" + (linux ? "" : ", real-process proofs skipped") + ")");
+    }
+}

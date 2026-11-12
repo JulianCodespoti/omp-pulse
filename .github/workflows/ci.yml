@@ -1,0 +1,118 @@
+# Hosted validation for pushes to main and every pull request.
+#
+# gate:   scripts/ci.sh on Linux, the same default tier contributors run
+#         locally, split into its two groups as parallel jobs: web (docs, web,
+#         extensions, Android host-JVM, phone harness) and rust (fmt, clippy -D
+#         warnings, build, test, Windows cross-check, e2e daemon, fresh-machine
+#         acceptance). One gate, two places: change ci.sh, not this file, to
+#         add a check.
+# native: cargo test on real macOS and Windows, which the Linux gate can only
+#         cross-check (Windows) or not compile at all (macOS: ring needs the
+#         Apple SDK).
+# msrv:   cargo check on exactly the rust-version Cargo.toml declares, so the
+#         documented minimum cannot drift below what the locked dependencies
+#         need.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Gate (${{ matrix.group }})
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [web, rust]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-java@v6
+        if: matrix.group == 'web'
+        with:
+          distribution: temurin
+          java-version: 17
+      # Both groups need Rust: the web client build writes the licence notices
+      # through `cargo metadata`.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: ${{ matrix.group == 'rust' && 'rustfmt, clippy' || '' }}
+          targets: ${{ matrix.group == 'rust' && 'x86_64-pc-windows-gnu' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.group == 'rust'
+      # MinGW-w64: the C toolchain for the Windows cross-check. websockets: the
+      # e2e daemon smoke suite (e2e/daemon/pulse-smoke.py).
+      # A stalled mirror once held this step silently until the 60-minute job
+      # timeout; it normally takes under 30 s.
+      - name: System packages
+        if: matrix.group == 'rust'
+        timeout-minutes: 5
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends mingw-w64 python3-websockets
+      - run: scripts/ci.sh --group ${{ matrix.group }}
+
+  native:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # build.rs embeds public/app, so the web client comes first. Its build
+      # also writes the licence notices, which needs `cargo metadata`.
+      - name: Web client
+        run: |
+          npm ci --prefix web --no-audit --no-fund
+          cd web && npx vite build --base=./ --outDir ../public/app --emptyOutDir --sourcemap false
+      - run: cargo test --locked
+
+  msrv:
+    name: Minimum Rust (rust-version)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Web client
+        run: |
+          npm ci --prefix web --no-audit --no-fund
+          cd web && npx vite build --base=./ --outDir ../public/app --emptyOutDir --sourcemap false
+      - run: cargo check --locked --all-targets

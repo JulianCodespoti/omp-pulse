@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "packages": ["libstdc++", "bash", "git", "curl", "ca-certificates", "python3", "openssh-client"],
+  "abis": {
+    "arm64-v8a": {
+      "alpineRepo": "https://dl-cdn.alpinelinux.org/alpine/v3.24",
+      "rootfs": {
+        "version": "3.24.2",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.2-aarch64.tar.gz",
+        "mirrors": [
+          "https://dl-2.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.2-aarch64.tar.gz",
+          "https://mirrors.edge.kernel.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.2-aarch64.tar.gz"
+        ],
+        "sha256": "9bf70a7f18ea44094cbb5f70c58f9af129c8214745743db0e68e5502cc2ce773",
+        "bytes": 4028030
+      },
+      "omp": {
+        "version": "v18.10.4",
+        "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.10.4/omp-linux-musl-arm64",
+        "mirrors": [],
+        "sha256": "1ac115ea466876fcaa647b65cb152725ba64c3c6b198a304633b20bb1e44ef72",
+        "bytes": 230166448
+      }
+    }
+  }
+}

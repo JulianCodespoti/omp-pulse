@@ -1,0 +1,34 @@
+{
+  "diff": "AGGREGATE IS NOT A PER-FILE PATCH",
+  "firstChangedLine": 1,
+  "perFileResults": [
+    {
+      "path": "src/one.ts",
+      "diff": "@@ -1 +1 @@\n-export const one = 1;\n+export const one = 2;\n",
+      "firstChangedLine": 1,
+      "op": "update",
+      "oldText": "SNAPSHOT MUST NOT REPLACE RECORDED OLD TEXT",
+      "newText": "CURRENT CONTENT MUST NOT REPLACE RECORDED NEW TEXT"
+    },
+    {
+      "path": "src/two.ts",
+      "diff": "@@ -0,0 +1,2 @@\n+export const two = 2;\n+export const label = 'two';\n",
+      "firstChangedLine": 1,
+      "op": "create",
+      "snapshotsPruned": true
+    },
+    {
+      "path": "src/deleted.ts",
+      "diff": "@@ -1 +0,0 @@\n-export const obsolete = true;\n",
+      "firstChangedLine": 1,
+      "op": "delete"
+    },
+    {
+      "path": "src/moved.ts",
+      "sourcePath": "src/original.ts",
+      "move": "src/moved.ts",
+      "diff": "",
+      "op": "update"
+    }
+  ]
+}

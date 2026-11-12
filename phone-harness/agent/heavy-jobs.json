@@ -1,0 +1,26 @@
+{
+  "_doc": "Rules for bin/heavy and the heavy-jobs omp extension. A command is split into simple commands (on && || ; | and newlines); VAR=value prefixes and env/nice/time/timeout/command wrappers are dropped; each rule pattern must then match at the start of a simple command, after an optional directory prefix (./gradlew, /usr/bin/cargo, web/node_modules/.bin/tsc). Class \"none\" anywhere means never broker (watchers, dev servers). If several simple commands match, the most memory-hungry class sets the resources and the command is cacheable only if every match is. It runs in the shell lane (bin/lane: the Android shell user, which may use more cores than the app) only if every match has \"lane\": true (output-only checks), the line is side-effect free and the lane is set up; HEAVY_LANE=off keeps it local. Patterns must be valid in both Python re and JavaScript RegExp. mem_mb/cpu are first guesses; the broker learns real peaks per command. reserve_mb and mem_mb were measured on a reference phone with ~11 GB MemTotal; bin/heavy scales them linearly to this phone's MemTotal at load (`heavy --help` prints the values in force). A repo may prepend rules in <git root>/.omp/heavy-jobs.json {\"rules\": [...]}.",
+  "reserve_mb": 1200,
+  "cache_ttl_s": 21600,
+  "classes": {
+    "rust": {"mem_mb": 1500, "cpu": 2, "floor": true},
+    "jvm": {"mem_mb": 1800, "cpu": 2, "floor": true},
+    "native": {"mem_mb": 800, "cpu": 2},
+    "node": {"mem_mb": 700, "cpu": 1},
+    "node-test": {"mem_mb": 900, "cpu": 1},
+    "browser": {"mem_mb": 1200, "cpu": 2},
+    "py-test": {"mem_mb": 400, "cpu": 1}
+  },
+  "rules": [
+    {"id": "watch", "class": "none", "re": ".*\\s--watch\\b|cargo\\s+watch\\b|(npx\\s+)?vite(\\s+(dev|serve|preview)\\b|\\s*$)|(npm|pnpm|yarn|bun)\\s+(run\\s+)?(start|dev|serve|preview)\\b"},
+    {"id": "cargo-check", "class": "rust", "cache": true, "lane": true, "re": "cargo\\s+(\\+\\S+\\s+)?(test|t|check|c|clippy|nextest|bench)\\b"},
+    {"id": "cargo-build", "class": "rust", "re": "cargo\\s+(\\+\\S+\\s+)?(build|b|run|r|doc|install|rustc|llvm-cov)\\b"},
+    {"id": "gradle", "class": "jvm", "re": "gradlew?\\s+(?!--stop\\b|--version\\b|-v\\b)\\S"},
+    {"id": "e2e", "class": "browser", "re": "e2e/\\S+|node\\s+(\\S+\\s+)*scripts/verify-[\\w-]+\\.m?js\\b|(npx\\s+)?playwright\\s+test\\b"},
+    {"id": "tsc", "class": "node", "cache": true, "lane": true, "re": "(npx\\s+(--?\\S+\\s+)*)?tsc(\\s|$)"},
+    {"id": "node-test", "class": "node-test", "cache": true, "lane": true, "re": "node\\s+(\\S+\\s+)*--test\\b|(npx\\s+)?(vitest|jest)(\\s|$)|(npm|pnpm|yarn|bun)\\s+(run\\s+)?test\\b"},
+    {"id": "js-build", "class": "node", "re": "(npx\\s+)?vite\\s+build\\b|(npm|pnpm|yarn|bun)\\s+run\\s+build\\b|(npx\\s+)?(esbuild|webpack|rollup|rolldown)\\s"},
+    {"id": "py-test", "class": "py-test", "cache": true, "re": "pytest(\\s|$)|python3?\\s+-m\\s+(pytest|unittest)\\b"},
+    {"id": "make", "class": "native", "re": "(make|ninja)(\\s|$)|cmake\\s+--build\\b"}
+  ]
+}

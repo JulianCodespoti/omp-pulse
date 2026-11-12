@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""Shell tier: Android shell (UID 2000) over loopback ADB, no screen control.
+
+One-time per boot the user turns on Wireless debugging (Developer options;
+needs any Wi-Fi network joined) and, the first time only, shows a pairing code.
+After `connect`, adbd also listens on 127.0.0.1:5555 (`adb tcpip`), which keeps
+working with Wi-Fi off until the next reboot. Needs `adb` (`apk add android-tools`).
+
+  shell-tier pair PORT CODE     first time: pair with the code from "Pair device with pairing code"
+  shell-tier connect [PORT]     connect (PORT = Wireless debugging port; scans if omitted), pin :5555
+  shell-tier status             is a shell available? prints uid
+  shell-tier sh CMD...          run one shell command (e.g. `settings get system screen_brightness_mode`)
+  shell-tier grants             (re)apply omp-pulse's background grants; prints each result
+  shell-tier app PKG info                    enabled, running, standby bucket, battery exemption, granted perms
+  shell-tier app PKG grant|revoke PERM        runtime permission (android.permission. prefix optional)
+  shell-tier app PKG stop|disable|enable      force-stop; disable/enable for the user (data kept)
+  shell-tier app PKG bucket active|working_set|frequent|rare|restricted
+  shell-tier app PKG battery unrestricted|optimized
+  shell-tier role ROLE [PKG]                  default app holders (e.g. android.app.role.BROWSER); set if PKG
+  shell-tier net status                       airplane, mobile data, Wi-Fi, Bluetooth
+  shell-tier net data|airplane|wifi|bluetooth on|off [--revert-after S]
+
+Every change is read back. Stopping, disabling, revoking or restricting the assistant's own app or
+core system packages is refused. Changes that cut the phone's internet (data off, airplane on, Wi-Fi
+on: a Wi-Fi network without working internet, e.g. a captive portal or a filtered network, can take
+over the default route) require --revert-after (10-3600 s): a detached job on the phone restores the
+previous state even if this connection is gone.
+
+After a reboot the shell is gone: the user turns Wireless debugging on again, then `connect`.
+`connect` applies `grants` every time, so a fresh boot restores anything Android reset.
+Grants persist across reboots; only the shell itself dies.
+"""
+import json
+import re
+import socket
+import subprocess
+import sys
+
+FIXED = "127.0.0.1:5555"
+ENDPOINT_FILE = "/root/.config/omp-phone/endpoint.json"
+
+
+def pulse_package():
+    """omp-pulse's package from the app's endpoint.json; com.omppulse.app on builds without it."""
+    try:
+        with open(ENDPOINT_FILE) as f:
+            value = json.load(f).get("package")
+    except (OSError, ValueError, AttributeError):
+        value = None
+    return value if isinstance(value, str) and value else "com.omppulse.app"
+
+
+PULSE = pulse_package()
+# One line per grant; all idempotent. Keeps omp-pulse (and so the daemon and every agent) running
+# in the background.
+GRANTS = [
+    f"cmd deviceidle whitelist +{PULSE}",
+    f"appops set {PULSE} RUN_ANY_IN_BACKGROUND allow",
+    f"appops set {PULSE} RUN_IN_BACKGROUND allow",
+]
+
+
+def adb(*args, timeout=30):
+    try:
+        return subprocess.run(["adb", *args], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Non-adb listeners make `adb connect` hang; treat as a miss.
+        return subprocess.CompletedProcess(args, 124, "", "timeout")
+    except OSError:
+        return subprocess.CompletedProcess(args, 127, "", "adb is not installed: apk add android-tools")
+
+
+def shell_ok(serial=FIXED):
+    r = adb("-s", serial, "shell", "id -u", timeout=10)
+    return r.returncode == 0 and r.stdout.strip() == "2000"
+
+
+def open_ports(lo=30000, hi=49999):
+    found = []
+    for port in range(lo, hi + 1):
+        s = socket.socket()
+        s.settimeout(0.02)
+        if s.connect_ex(("127.0.0.1", port)) == 0:
+            found.append(port)
+        s.close()
+    return found
+
+
+def connect(port=None):
+    adb("connect", FIXED, timeout=10)
+    if shell_ok():
+        return True
+    ports = [port] if port else open_ports()
+    for p in ports:
+        serial = f"127.0.0.1:{p}"
+        adb("connect", serial, timeout=4)
+        if shell_ok(serial):
+            adb("-s", serial, "tcpip", "5555", timeout=15)
+            subprocess.run(["sleep", "2"])
+            adb("connect", FIXED, timeout=10)
+            break
+    if not shell_ok():
+        return False
+    grants(quiet=True)
+    return True
+
+
+def grants(quiet=False):
+    """Apply GRANTS; returns the number that failed."""
+    failed = 0
+    for line in GRANTS:
+        r = adb("-s", FIXED, "shell", line, timeout=20)
+        ok = r.returncode == 0 and "Exception" not in r.stdout + r.stderr
+        failed += not ok
+        if not quiet or not ok:
+            print(("ok    " if ok else "FAIL  ") + line + ("" if ok else "  :: " + (r.stdout + r.stderr).strip()[:200]))
+    return failed
+
+
+def sh(line, timeout=30):
+    return adb("-s", FIXED, "shell", line, timeout=timeout)
+
+
+# Packages whose loss would cut off the assistant or the phone itself.
+PROTECTED_PACKAGES = {PULSE, "android", "com.android.shell", "com.android.settings", "com.android.systemui",
+                      "com.android.phone", "com.android.providers.settings", "com.sec.android.app.launcher",
+                      "com.google.android.gms", "com.android.vending", "com.samsung.android.biometrics.app.setting",
+                      "com.android.permissioncontroller", "com.google.android.permissioncontroller",
+                      "com.samsung.android.honeyboard", "com.android.networkstack", "com.google.android.networkstack"}
+BUCKETS = {"active": 10, "working_set": 20, "frequent": 30, "rare": 40, "restricted": 45}
+PACKAGE_RE = re.compile(r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$")
+
+
+def emit(obj, ok):
+    print(json.dumps(obj))
+    return 0 if ok else 1
+
+
+def app_state(pkg):
+    dump = sh(f"dumpsys package {pkg}").stdout
+    if f"Package [{pkg}]" not in dump:
+        return None
+    # `pm list packages -d FILTER` matches substrings: compare whole names.
+    disabled = ("package:" + pkg) in sh(f"pm list packages -d {pkg}").stdout.split()
+    bucket = sh(f"am get-standby-bucket {pkg}").stdout.strip()
+    names = {v: k for k, v in BUCKETS.items()}
+    granted = sorted({m.group(1) for m in re.finditer(r"(android\.permission\.[A-Z_]+): granted=true", dump)})
+    return {"package": pkg, "enabled": not disabled, "running": bool(sh(f"pidof {pkg}").stdout.strip()),
+            "standby_bucket": names.get(int(bucket), bucket) if bucket.isdigit() else bucket,
+            "battery_unrestricted": f",{pkg}," in sh("cmd deviceidle whitelist").stdout,
+            "granted_permissions": granted}
+
+
+def app(pkg, verb, arg=None):
+    if not PACKAGE_RE.match(pkg):
+        print("package must look like com.example.app", file=sys.stderr)
+        return 2
+    state = app_state(pkg)
+    if state is None:
+        print(f"{pkg} is not installed", file=sys.stderr)
+        return 2
+    if verb == "info":
+        return emit(state, True)
+    harmful = verb in ("stop", "disable", "revoke") or (verb == "bucket" and arg in ("rare", "restricted")) \
+        or (verb == "battery" and arg == "optimized")
+    if harmful and pkg in PROTECTED_PACKAGES:
+        print(f"refused: {verb} on {pkg} would cut off the assistant or core phone functions", file=sys.stderr)
+        return 3
+    if verb in ("grant", "revoke"):
+        if not arg:
+            print(f"usage: shell-tier app PKG {verb} PERMISSION", file=sys.stderr)
+            return 2
+        perm = arg if "." in arg else "android.permission." + arg
+        r = sh(f"pm {verb} {pkg} {perm}")
+        now = perm in app_state(pkg)["granted_permissions"]
+        ok = r.returncode == 0 and now == (verb == "grant")
+        return emit({"package": pkg, "permission": perm, "granted": now, "verified": ok,
+                     "error": r.stderr.strip()[:200] or None}, ok)
+    if verb == "stop":
+        sh(f"am force-stop {pkg}")
+        ok = not sh(f"pidof {pkg}").stdout.strip()
+        return emit({"package": pkg, "stopped": ok}, ok)
+    if verb in ("disable", "enable"):
+        sh(f"pm {'disable-user --user 0' if verb == 'disable' else 'enable'} {pkg}")
+        ok = app_state(pkg)["enabled"] == (verb == "enable")
+        return emit({"package": pkg, "enabled": verb == "enable" if ok else not (verb == "enable")}, ok)
+    if verb == "bucket":
+        if arg not in BUCKETS:
+            print("bucket must be one of " + ", ".join(BUCKETS), file=sys.stderr)
+            return 2
+        before = state["standby_bucket"]
+        sh(f"am set-standby-bucket {pkg} {arg}")
+        after = app_state(pkg)["standby_bucket"]
+        ok = after == arg
+        return emit({"package": pkg, "before": before, "after": after}, ok)
+    if verb == "battery":
+        if arg not in ("unrestricted", "optimized"):
+            print("battery must be unrestricted or optimized", file=sys.stderr)
+            return 2
+        sh(f"cmd deviceidle whitelist {'+' if arg == 'unrestricted' else '-'}{pkg}")
+        now = app_state(pkg)["battery_unrestricted"]
+        ok = now == (arg == "unrestricted")
+        return emit({"package": pkg, "battery_unrestricted": now}, ok)
+    print(f"unknown app action {verb}", file=sys.stderr)
+    return 2
+
+
+def role(name, pkg=None):
+    if not re.match(r"^[A-Za-z0-9_.]+$", name):
+        print("role must look like android.app.role.BROWSER", file=sys.stderr)
+        return 2
+    if "." not in name:
+        name = "android.app.role." + name.upper()
+    holders = sh(f"cmd role get-role-holders {name}").stdout.split()
+    if pkg is None:
+        return emit({"role": name, "holders": holders}, True)
+    if not PACKAGE_RE.match(pkg):
+        print("package must look like com.example.app", file=sys.stderr)
+        return 2
+    r = sh(f"cmd role add-role-holder {name} {pkg}")
+    after = sh(f"cmd role get-role-holders {name}").stdout.split()
+    ok = pkg in after
+    return emit({"role": name, "before": holders, "after": after,
+                 "error": (r.stdout + r.stderr).strip()[:200] or None}, ok)
+
+
+def net_status():
+    return {"airplane": sh("cmd connectivity airplane-mode").stdout.strip() == "enabled",
+            "mobile_data": sh("settings get global mobile_data").stdout.strip() == "1",
+            "wifi": sh("cmd wifi status").stdout.strip().startswith("Wifi is enabled"),
+            "bluetooth": sh("settings get global bluetooth_on").stdout.strip() == "1"}
+
+
+NET = {  # name: (command for on, command for off, status field)
+    "data": ("svc data enable", "svc data disable", "mobile_data"),
+    "airplane": ("cmd connectivity airplane-mode enable", "cmd connectivity airplane-mode disable", "airplane"),
+    "wifi": ("cmd wifi set-wifi-enabled enabled", "cmd wifi set-wifi-enabled disabled", "wifi"),
+    "bluetooth": ("cmd bluetooth_manager enable", "cmd bluetooth_manager disable", "bluetooth"),
+}
+
+
+def net(args):
+    if args == ["status"]:
+        return emit(net_status(), True)
+    if len(args) not in (2, 4) or args[0] not in NET or args[1] not in ("on", "off"):
+        print("usage: shell-tier net data|airplane|wifi|bluetooth on|off [--revert-after S]", file=sys.stderr)
+        return 2
+    what, want = args[0], args[1] == "on"
+    revert = None
+    if len(args) == 4:
+        if args[2] != "--revert-after" or not args[3].isdigit() or not 10 <= int(args[3]) <= 3600:
+            print("--revert-after takes 10-3600 seconds", file=sys.stderr)
+            return 2
+        revert = int(args[3])
+    cuts_internet = (what == "data" and not want) or (what in ("airplane", "wifi") and want)
+    if cuts_internet and revert is None:
+        print(f"refused: {what} {args[1]} cuts the phone's internet (the assistant's only link): "
+              "add --revert-after SECONDS", file=sys.stderr)
+        return 3
+    on, off, field = NET[what]
+    before = net_status()[field]
+    if revert is not None and before != want:
+        # Detached on the phone: survives this adb session and our loss of connectivity.
+        restore = on if before else off
+        sh(f"setsid nohup sh -c 'sleep {revert}; {restore}' >/dev/null 2>&1 </dev/null &")
+    sh(on if want else off)
+    after = net_status()[field]
+    ok = after == want
+    return emit({"setting": what, "before": before, "after": after, "revert_after_s": revert}, ok)
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "pair":
+        if len(rest) != 2:
+            print("usage: shell-tier pair PORT CODE", file=sys.stderr)
+            return 2
+        r = adb("pair", f"127.0.0.1:{rest[0]}", rest[1])
+        print((r.stdout + r.stderr).strip())
+        return r.returncode
+    if cmd == "connect":
+        ok = connect(int(rest[0]) if rest else None)
+        print("shell ready (uid 2000)" if ok else "no shell: turn on Wireless debugging (and pair once)")
+        return 0 if ok else 4
+    if cmd == "status":
+        adb("connect", FIXED, timeout=10)
+        ok = shell_ok()
+        print("shell ready (uid 2000)" if ok else "unavailable")
+        return 0 if ok else 4
+    if cmd in ("grants", "app", "role", "net"):
+        if not shell_ok():
+            adb("connect", FIXED, timeout=10)
+            if not shell_ok():
+                print("no shell: run `shell-tier connect` first", file=sys.stderr)
+                return 4
+        if cmd == "grants":
+            return 1 if grants() else 0
+        if cmd == "app":
+            if len(rest) not in (2, 3):
+                print("usage: shell-tier app PKG ACTION [ARG]", file=sys.stderr)
+                return 2
+            return app(*rest)
+        if cmd == "role":
+            if len(rest) not in (1, 2):
+                print("usage: shell-tier role ROLE [PKG]", file=sys.stderr)
+                return 2
+            return role(*rest)
+        return net(rest)
+    if cmd == "sh":
+        if not shell_ok():
+            adb("connect", FIXED, timeout=10)
+        r = subprocess.run(["adb", "-s", FIXED, "shell", " ".join(rest)])
+        return r.returncode
+    print(f"unknown command {cmd}", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

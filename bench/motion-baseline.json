@@ -1,0 +1,53 @@
+{
+  "worst": [
+    {
+      "interaction": "drawer swipe open + settle",
+      "kind": "motion",
+      "p95": 16.8,
+      "over": 0,
+      "long": 0
+    },
+    {
+      "interaction": "sheet open (session settings)",
+      "kind": "mount",
+      "p95": 33.4,
+      "over": 10,
+      "long": 0
+    },
+    {
+      "interaction": "sheet close",
+      "kind": "mount",
+      "p95": 16.8,
+      "over": 2,
+      "long": 0
+    },
+    {
+      "interaction": "chat open (120 turns)",
+      "kind": "mount",
+      "p95": 183.3,
+      "over": 15,
+      "long": 0
+    },
+    {
+      "interaction": "composer expand",
+      "kind": "mount",
+      "p95": 16.8,
+      "over": 0,
+      "long": 0
+    },
+    {
+      "interaction": "settings push",
+      "kind": "mount",
+      "p95": 16.8,
+      "over": 3,
+      "long": 0
+    },
+    {
+      "interaction": "settings pop",
+      "kind": "motion",
+      "p95": 16.7,
+      "over": 0,
+      "long": 0
+    }
+  ]
+}

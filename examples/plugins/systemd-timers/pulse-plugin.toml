@@ -1,0 +1,36 @@
+schema = 1
+id = "systemd-timers"
+name = "Systemd timers"
+version = "0.1.0"
+description = "Your systemd user timers and the services they run, with a tap to run one now"
+client = "client.js"
+slots = ["drawer", "page"]
+
+[[sources]]
+id = "timers"
+command = ["systemctl", "--user", "list-timers", "--all", "--output=json", "--no-pager"]
+interval_s = 30
+timeout_s = 5
+
+[[sources]]
+id = "units"
+command = ["systemctl", "--user", "list-units", "--type=service", "--all", "--output=json", "--no-pager"]
+interval_s = 30
+timeout_s = 5
+
+[[options]]
+id = "show_inactive"
+label = "Show timers with no next run"
+type = "bool"
+default = false
+
+# Runs only on a tap. The argument must be a whole service name matching the
+# pattern, so a plugin cannot pass anything else to systemctl. It must start
+# with a letter or digit and comes after "--", so it can never be read as an
+# option such as --global.
+[[actions]]
+id = "start"
+label = "Start the service a timer runs"
+command = ["systemctl", "--user", "start", "--", "{arg}"]
+arg_pattern = "[A-Za-z0-9][A-Za-z0-9@._:-]*\\.service"
+timeout_s = 60

@@ -1,0 +1,27 @@
+schema = 1
+id = "host-usage"
+name = "Host usage"
+version = "0.1.0"
+description = "Load and memory of the computer running the daemon"
+client = "client.js"
+slots = ["drawer", "composer.status", "page"]
+
+# Each source is a fixed command (argv, never a shell line). The daemon runs it
+# only when a device asks and the cached output is older than interval_s.
+[[sources]]
+id = "load"
+command = ["cat", "/proc/loadavg"]
+interval_s = 10
+timeout_s = 5
+
+[[sources]]
+id = "mem"
+command = ["cat", "/proc/meminfo"]
+interval_s = 10
+timeout_s = 5
+
+[[sources]]
+id = "host"
+command = ["uname", "-sn"]
+interval_s = 3600
+timeout_s = 5

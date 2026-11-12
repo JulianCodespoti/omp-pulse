@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PhoneAccessibilityService config: pull-only service (ui dump/tap/type/swipe/screenshot via PhoneApi).
+     flagRetrieveInteractiveWindows lets `ui dump` see dialogs and the IME, not just the active app.
+     Nothing consumes events (onAccessibilityEvent is empty), so subscribe to the narrowest type:
+     typeAllMask woke the app for every scroll, click and text change in every app all day.
+     The system still sends this service the events its node cache needs to stay consistent. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/phone_accessibility_description"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="50"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows|flagReportViewIds|flagIncludeNotImportantViews"
+    android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
+    android:canTakeScreenshot="true"/>

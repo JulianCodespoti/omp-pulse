@@ -1,0 +1,82 @@
+#!/bin/sh
+# Set up omp-pulse dictation (local Parakeet speech-to-text) on the phone.
+#
+# Why not `omp-pulse asr install`: PyPI has only glibc (manylinux) wheels for
+# sherpa-onnx, and this rootfs is musl. So build sherpa-onnx from source
+# against Alpine's onnxruntime. Idempotent; rerun after an app update wipes
+# the rootfs packages, then restart the daemon (force-stop omp-pulse, reopen).
+#
+# Phone-specific fixes baked in:
+# - CMake's own GitHub downloads hang forever on slow mobile networks, so
+#   deps are prefetched with curl into ~/Downloads, which sherpa's cmake checks first.
+# - GCC 15 needs `-include cstdint` for sherpa-onnx 1.13.x sources.
+# - TTS must stay ON: the python package imports TTS symbols unconditionally.
+#
+# Model choice (the last one chosen is pinned as asr_model_dir in config.toml,
+# because the daemon otherwise picks the highest-sorting model directory):
+#   (default)  Parakeet unified 0.6B int8: ~0.73 GiB resident, ~1.03 GiB peak,
+#              ~3.6 s load; Open ASR Leaderboard average WER 5.91%.
+#   --small    Parakeet TDT 110M int8: ~0.21 GiB resident, ~0.40 GiB peak,
+#              ~1.7 s load, ~2x faster decode; average WER ~7.5% (NVIDIA card).
+# Both measured on a reference phone (4 threads) with omp-pulse's sidecar that runs
+# ONNX Runtime without its CPU arena and decodes in <=30 s chunks; slower phones load
+# and decode proportionally slower. The daemon
+# reads config.toml at start: restart it to switch.
+set -eu
+case "${1:-}" in
+  -h|--help) sed -n '2,/^set /{/^#/{s/^# \{0,1\}//;p;};}' "$0"; exit 0;;
+  --small) MODEL=sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8;;
+  '') MODEL=sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming;;
+  *) echo "usage: asr-setup [--small]" >&2; exit 2;;
+esac
+
+VER=1.13.8
+STATE=/root/.local/state/omp-pulse/asr
+VENV=$STATE/venv
+SRC=/root/build/sherpa_onnx-$VER
+CONFIG=/root/.config/omp-pulse/config.toml
+
+apk add -q cmake make g++ linux-headers python3-dev py3-pip py3-numpy onnxruntime-dev ffmpeg curl
+
+mkdir -p "$STATE" /root/build /root/Downloads
+if [ ! -f "$STATE/$MODEL/encoder.int8.onnx" ]; then
+  curl -fL --retry 3 -o "$STATE/m.tar.bz2" \
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$MODEL.tar.bz2"
+  tar xjf "$STATE/m.tar.bz2" -C "$STATE" && rm "$STATE/m.tar.bz2"
+fi
+
+if [ ! -d "$SRC" ]; then
+  curl -fsL -o /root/build/s.tgz \
+    "https://files.pythonhosted.org/packages/source/s/sherpa-onnx/sherpa_onnx-$VER.tar.gz"
+  tar xzf /root/build/s.tgz -C /root/build && rm /root/build/s.tgz
+fi
+
+# Prefetch every non-onnxruntime dependency to the local path cmake checks first.
+for f in "$SRC"/cmake/*.cmake; do
+  u=$(grep -o 'https://github.com[^")]*\.\(tar\.gz\|zip\)' "$f" | grep -v onnxruntime | head -1 || true)
+  n=$(grep -o 'ENV{HOME}/Downloads/[^ )"]*' "$f" | head -1 | sed 's#.*/##' || true)
+  [ -n "$u" ] && [ -n "$n" ] && [ ! -s "/root/Downloads/$n" ] &&
+    curl -fsL --retry 3 --connect-timeout 20 --max-time 300 -o "/root/Downloads/$n" "$u"
+done
+
+[ -x "$VENV/bin/python" ] || python3 -m venv --system-site-packages "$VENV"
+if ! "$VENV/bin/python" -c 'import sherpa_onnx' 2>/dev/null; then
+  cd "$SRC"
+  SHERPA_ONNXRUNTIME_INCLUDE_DIR=/usr/include/onnxruntime \
+  SHERPA_ONNXRUNTIME_LIB_DIR=/usr/lib \
+  SHERPA_ONNX_CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-include\ cstdint -DSHERPA_ONNX_ENABLE_WEBSOCKET=OFF -DSHERPA_ONNX_ENABLE_BINARY=OFF" \
+  MAKEFLAGS=-j3 \
+    "$VENV/bin/pip" install --no-build-isolation --force-reinstall --no-deps .
+fi
+
+# Pin the chosen model: a top-level key, so it goes before any [table].
+mkdir -p "${CONFIG%/*}" && touch "$CONFIG"
+line="asr_model_dir = \"$STATE/$MODEL\""
+if grep -q '^asr_model_dir[[:space:]]*=' "$CONFIG"; then
+  sed -i "s#^asr_model_dir[[:space:]]*=.*#$line#" "$CONFIG"
+else
+  awk -v l="$line" '!done && /^\[/ { print l; done = 1 } { print } END { if (!done) print l }' \
+    "$CONFIG" >"$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
+fi
+
+omp-pulse asr status

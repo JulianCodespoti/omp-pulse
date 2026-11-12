@@ -1,0 +1,424 @@
+apply plugin: 'com.android.application'
+
+// ── Automatic versioning — every build is an upgrade ───────────────────────
+// versionCode must increase monotonically for Android to accept an update.
+// We use minutes-since-2024-01-01 + git commit count, so:
+//   • every build (even without a new commit) increments via wall-clock
+//   • versionCode stays < 2_100_000_000 until ~2045 (minutes, not seconds)
+//   • git count adds ordering across clones with skewed clocks
+// versionName is git describe if available, else a dated +short-sha fallback.
+// INVARIANT: Do not hand-edit versionCode/versionName — they are derived.
+def computeVersionCode() {
+    int gitCount = 0
+    try {
+        def out = new ByteArrayOutputStream()
+        exec {
+            commandLine 'git', 'rev-list', '--count', 'HEAD'
+            standardOutput = out
+        }
+        gitCount = out.toString().trim().toInteger()
+    } catch (ignored) {
+        // no git (CI shallow clone, etc.) — fall through with timestamp only
+    }
+    // Minutes since 2024-01-01T00:00:00Z — keeps code < 2.1B for decades.
+    // Using minutes (not seconds) trades 60× headroom for still-per-minute uniqueness.
+    long nowSec = System.currentTimeMillis() / 1000L
+    long offsetSec = 1704067200L // 2024-01-01
+    long minutes = (nowSec - offsetSec) / 60L
+    long code = 1_000_000L + minutes + gitCount
+    if (code > 2100000000L) code = 2100000000L
+    if (code < 1L) code = 1L
+    return (int) code
+}
+
+def computeVersionName() {
+    try {
+        def out = new ByteArrayOutputStream()
+        exec {
+            commandLine 'git', 'describe', '--tags', '--always', '--dirty'
+            standardOutput = out
+        }
+        def desc = out.toString().trim()
+        if (desc) return desc
+    } catch (ignored) { }
+    try {
+        def out = new ByteArrayOutputStream()
+        exec {
+            commandLine 'git', 'rev-parse', '--short', 'HEAD'
+            standardOutput = out
+        }
+        def sha = out.toString().trim()
+        def date = new Date().format('yyyy.MM.dd', TimeZone.getTimeZone('UTC'))
+        if (sha) return "1.0-${date}+${sha}"
+    } catch (ignored) { }
+    def date = new Date().format('yyyy.MM.dd.HHmm', TimeZone.getTimeZone('UTC'))
+    return "1.0-${date}"
+}
+
+// ── Release signing — stable key, never in repo ───────────────────────────
+// Secrets are read from ~/.gradle/gradle.properties or env vars, so the APK
+// can be updated in place. A different signing key would force uninstall.
+// If the key is absent the release build FAILS loudly instead of silently
+// falling back to the debug keystore (which would produce an uninstall-required APK).
+//
+// Setup (once):
+//   keytool -genkeypair -v -keystore ~/.gradle/omp-pulse-release.keystore \
+//     -alias omppulse -keyalg RSA -keysize 2048 -validity 10000
+// Then add to ~/.gradle/gradle.properties (NOT the repo's gradle.properties):
+//   ompPulseStoreFile=/home/<you>/.gradle/omp-pulse-release.keystore
+//   ompPulseStorePassword=<store-pass>
+//   ompPulseKeyAlias=omppulse
+//   ompPulseKeyPassword=<key-pass>
+// Or use env vars: OMP_PULSE_KEYSTORE, OMP_PULSE_STORE_PASSWORD,
+//                  OMP_PULSE_KEY_ALIAS, OMP_PULSE_KEY_PASSWORD
+def ompStoreFile = findProperty('ompPulseStoreFile') ?: System.getenv('OMP_PULSE_KEYSTORE')
+def ompStorePassword = findProperty('ompPulseStorePassword') ?: System.getenv('OMP_PULSE_STORE_PASSWORD')
+def ompKeyAlias = findProperty('ompPulseKeyAlias') ?: System.getenv('OMP_PULSE_KEY_ALIAS')
+def ompKeyPassword = findProperty('ompPulseKeyPassword') ?: System.getenv('OMP_PULSE_KEY_PASSWORD')
+def hasReleaseSigning = ompStoreFile && ompStorePassword && ompKeyAlias && ompKeyPassword
+def isReleaseBuild = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+def nativeReleaseId = (System.getenv('OMP_PULSE_RELEASE_ID') ?: 'r2-unpublished').trim()
+if (!nativeReleaseId || nativeReleaseId.contains('"') || nativeReleaseId.contains('\n')) {
+    throw new GradleException("OMP_PULSE_RELEASE_ID must be a non-empty, newline-free value")
+}
+
+// Protocol numbers come from the repository-root protocol-version.json, the one
+// source shared with build.rs, the deploy manifest and the web build. Validated
+// here the same way: two positive integers, minimum no greater than the
+// version the shell accepts.
+def protocolMetadataFile = file("$rootDir/../../protocol-version.json")
+if (!protocolMetadataFile.isFile()) {
+    throw new GradleException("${protocolMetadataFile} is missing; it is the single source for protocol numbers")
+}
+def protocolMetadata = new groovy.json.JsonSlurper().parse(protocolMetadataFile)
+def protocolVersion = protocolMetadata.protocolVersion
+def minClientProtocolVersion = protocolMetadata.minClientProtocolVersion
+if (!(protocolVersion instanceof Integer) || !(minClientProtocolVersion instanceof Integer) ||
+        protocolVersion <= 0 || minClientProtocolVersion <= 0 ||
+        minClientProtocolVersion > protocolVersion ||
+        protocolMetadata.size() != 2) {
+    throw new GradleException("protocol-version.json must contain exactly protocolVersion and minClientProtocolVersion, both positive, minimum <= version")
+}
+// OMP_PULSE_SERVER_URL is optional. Set: a personal build — that laptop is
+// the default run mode and its https /app/ links open the shell. Unset: the
+// public build — the first run shows the bundled onboarding and the user
+// chooses this phone or a laptop at runtime. Either way BuildConfig carries a
+// String ("" when unset), never an absent field.
+def nativeServerUrl = System.getenv("OMP_PULSE_SERVER_URL") ?: ""
+def serverLinkHost = null
+if (nativeServerUrl) {
+    def serverUri = new URI(nativeServerUrl)
+    def serverHost = serverUri.host?.toLowerCase(Locale.ROOT)
+    def unbracketedHost = serverHost?.startsWith("[") ? serverHost.substring(1, serverHost.length() - 1) : serverHost
+    def authority = serverUri.rawAuthority ?: ""
+    def numericHost = unbracketedHost != null && unbracketedHost ==~ /[0-9.]+/
+    def ipv4Host = unbracketedHost != null && unbracketedHost ==~ /(?:[0-9]{1,3}\.){3}[0-9]{1,3}/
+    def ipv4Octets = ipv4Host ? unbracketedHost.split('\\.').collect { it.toInteger() } : []
+    def domainHost = unbracketedHost != null && !unbracketedHost.contains(":") && !ipv4Host
+    def hostLabels = domainHost ? unbracketedHost.split("\\.", -1) : []
+    def invalidDomainHost = domainHost && (unbracketedHost.endsWith(".") ||
+            unbracketedHost.endsWith(".localhost") || unbracketedHost.endsWith(".local") || unbracketedHost.endsWith(".localdomain") ||
+            hostLabels.any { label -> !label || label.length() > 63 || !(label ==~ /[a-z0-9](?:[a-z0-9-]*[a-z0-9])?/) } ||
+            hostLabels[-1] ==~ /[0-9]+/ || hostLabels[-1].startsWith("0x"))
+    def invalidIpv4Host = ipv4Host && (ipv4Octets.any { it > 255 } ||
+            unbracketedHost.split('\\.').any { it.length() > 1 && it.startsWith("0") })
+    def isLoopback = unbracketedHost == "localhost" || unbracketedHost?.endsWith(".localhost") ||
+            (ipv4Host && ipv4Octets[0] == 127)
+    def isUnspecified = ipv4Host && ipv4Octets.every { it == 0 }
+    if (unbracketedHost?.contains(":")) {
+        def address = java.net.InetAddress.getByName(unbracketedHost)
+        isLoopback = isLoopback || address.isLoopbackAddress()
+        isUnspecified = isUnspecified || address.isAnyLocalAddress()
+    }
+    if ((numericHost && !ipv4Host) || invalidDomainHost || invalidIpv4Host) {
+        throw new GradleException("Native server host is not a valid IP address or public hostname")
+    }
+    def invalidPort = serverUri.port == 0 || serverUri.port > 65535 || authority.endsWith(":")
+    def isHttps = serverUri.scheme?.equalsIgnoreCase("https")
+    def isDebugLoopbackHttp = !isReleaseBuild && serverUri.scheme?.equalsIgnoreCase("http") && isLoopback
+    if (!serverHost || serverUri.rawUserInfo != null || nativeServerUrl.contains("?") || nativeServerUrl.contains("#") ||
+            serverUri.query != null || serverUri.fragment != null || invalidPort || serverUri.path != "/app/" ||
+            !(isHttps || isDebugLoopbackHttp) || (isHttps && isLoopback) || isUnspecified) {
+        throw new GradleException("Native server must use the selected /app/ HTTPS endpoint; loopback HTTP is debug-only")
+    }
+    serverLinkHost = unbracketedHost
+}
+
+// -PompPulseAppIdSuffix=.dev installs a test build beside the real app. Every
+// authority and permission in the manifest derives from ${applicationId}, so
+// the two never collide.
+def appIdSuffix = (findProperty('ompPulseAppIdSuffix') ?: '').toString()
+if (appIdSuffix && !(appIdSuffix ==~ /(\.[A-Za-z][A-Za-z0-9_]*)+/)) {
+    throw new GradleException("ompPulseAppIdSuffix must look like .dev (dot-separated Java identifiers), got '${appIdSuffix}'")
+}
+
+// Native runtime inputs. Proot and its helpers are committed prebuilts (see
+// vendor/proot/PROVENANCE.md); libomppulse.so is the daemon cross-built by
+// scripts/android/build-runtime.sh. Both are packaged as jniLibs so Android
+// installs them executable in nativeLibraryDir.
+def vendorJniDir = file("$rootDir/vendor/proot")
+def runtimeJniDir = layout.buildDirectory.dir("generated/runtime-jni").get().asFile
+
+// Phone harness seed. The repo's phone-harness/ is the single source: packageHarnessSeed
+// turns it into assets at build time (HarnessSeed.java documents the layout), and
+// every file it embeds is declared as a task input, so a harness edit rebuilds the
+// APK's seed and nothing undeclared can slip in. Tests, caches, vendored deps and
+// per-device state never ship; `.gitignore` is added explicitly because Gradle's
+// default excludes drop it, and the device repo needs it.
+def harnessDir = rootProject.file("../../phone-harness")
+def harnessAssetsDir = layout.buildDirectory.dir("generated/harness-assets").get().asFile
+def harnessSeedFiles = fileTree(harnessDir) {
+    // Mirrors phone-harness/.gitignore (Ant patterns: no character classes) plus tests.
+    exclude 'tests/**', 'shipped/**',
+            '**/__pycache__/**', '**/*.pyc', '**/*.pyo', '**/*.pyd', '**/node_modules/**', '**/*.class',
+            '**/*.egg-info/**', '**/.pytest_cache/**', '**/.mypy_cache/**', '**/.ruff_cache/**', '**/.coverage',
+            'build/**', 'dist/**', 'artifacts/**', '.state/**', 'state/**', '.local/**',
+            '**/.env', '**/.env.*', '**/token', '**/agent.db', '**/agent.db-*', '**/password',
+            '**/*.keystore', '**/*.jks', '**/*.p12', '**/*.key'
+} + files(new File(harnessDir, ".gitignore")).filter { it.isFile() }
+
+android {
+    buildFeatures {
+        buildConfig true
+    }
+    namespace "com.omppulse.app"
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.omppulse.app"
+        if (appIdSuffix) applicationIdSuffix appIdSuffix
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode computeVersionCode()
+        versionName computeVersionName()
+        // The same React interface is bundled for onboarding/recovery and loaded from the daemon.
+        resourceConfigurations += ["en"]
+        buildConfigField "String", "OMP_PULSE_SERVER_URL", groovy.json.JsonOutput.toJson(nativeServerUrl)
+        buildConfigField "String", "OMP_PULSE_RELEASE_ID", "\"${nativeReleaseId.replace('\\', '\\\\').replace('"', '\\"')}\""
+        buildConfigField "int", "OMP_PULSE_PROTOCOL_VERSION", protocolVersion.toString()
+        buildConfigField "int", "OMP_PULSE_MIN_CLIENT_PROTOCOL_VERSION", minClientProtocolVersion.toString()
+        manifestPlaceholders = [
+            // The https link filter sits on an alias that is disabled without a
+            // baked host; the reserved .invalid name keeps the manifest valid.
+            ompPulseServerLinks: serverLinkHost ? "true" : "false",
+            ompPulseServerHost: serverLinkHost ?: "no-server.invalid",
+            ompPulseReleaseId: nativeReleaseId,
+            ompPulseProtocolVersion: protocolVersion.toString(),
+            ompPulseMinClientProtocolVersion: minClientProtocolVersion.toString(),
+        ]
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    sourceSets {
+        main {
+            // Each directory holds <abi>/lib*.so. Adding an ABI adds files
+            // under both (plus abiFilters and a runtime.json entry), no code.
+            jniLibs.srcDirs = [vendorJniDir, runtimeJniDir]
+            assets.srcDir(harnessAssetsDir)
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(ompStoreFile)
+                storePassword ompStorePassword
+                keyAlias ompKeyAlias
+                keyPassword ompKeyPassword
+            } else {
+                // Dummy to keep Gradle sync happy for developers without the key.
+                // The real check below throws only when a release is actually built.
+                storeFile file('dummy.keystore')
+                storePassword 'dummy'
+                keyAlias 'dummy'
+                keyPassword 'dummy'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // INVARIANT: R8 + resource shrinking are required for size target.
+            // Capacitor plugins are reflected; retain bridge entry points in R8.
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            } else if (isReleaseBuild) {
+                throw new GradleException(
+                    "Release signing not configured — refusing to fall back to debug key.\n" +
+                    "An APK signed with a different key cannot update an already-installed one.\n" +
+                    "Create a stable keystore once:\n" +
+                    "  keytool -genkeypair -v -keystore ~/.gradle/omp-pulse-release.keystore \\\n" +
+                    "    -alias omppulse -keyalg RSA -keysize 2048 -validity 10000\n" +
+                    "Then add to ~/.gradle/gradle.properties (NOT repo):\n" +
+                    "  ompPulseStoreFile=/home/<you>/.gradle/omp-pulse-release.keystore\n" +
+                    "  ompPulseStorePassword=<store-pass>\n" +
+                    "  ompPulseKeyAlias=omppulse\n" +
+                    "  ompPulseKeyPassword=<key-pass>\n" +
+                    "Or set env vars: OMP_PULSE_KEYSTORE, OMP_PULSE_STORE_PASSWORD,\n" +
+                    "  OMP_PULSE_KEY_ALIAS, OMP_PULSE_KEY_PASSWORD\n" +
+                    "Missing: storeFile=${ompStoreFile ?: 'unset'} storePassword=${ompStorePassword ? 'set' : 'unset'} alias=${ompKeyAlias ?: 'unset'} keyPassword=${ompKeyPassword ? 'set' : 'unset'}"
+                )
+            }
+            // Do not embed debuggable flag in release
+            debuggable false
+            jniDebuggable false
+            zipAlignEnabled true
+        }
+        debug {
+            // Debug keeps full symbols for local testing; signing uses default debug keystore
+            debuggable true
+            jniDebuggable true
+            // Still enable shrinking in debug? No — keep fast builds
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+
+    // INVARIANT: Do not embed a copy of the downloadable APK inside itself.
+    // `public/app-debug.apk` (or app-release.apk) being present under assets
+    // doubled the APK from ~5MB to >9MB. pulse-deploy.sh deletes it, but the
+    // build must also ignore it if it sneaks back via `cap copy`.
+    aaptOptions {
+        // `!*.apk` guards the historical self-embed (the downloadable APK once
+        // got copied into assets and doubled the size). `!*.map` matters just
+        // as much: vite emits a sourcemap per chunk and the bundled fallback
+        // carried 87 of them — the three largest ~1.9 MB each — which made the
+        // "optimised" release APK LARGER than the debug build it replaced.
+        // Release web builds omit sourcemaps too. `!*.gz:!*.br`: the web build
+        // writes precompressed sidecars for the daemon's remote clients; the
+        // WebView loads the bundled shell uncompressed, so they are dead weight.
+        ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~:!*.apk:!*.map:!*.gz:!*.br'
+    }
+
+    packaging {
+        resources {
+            // Drop unused resources, locales, and the self-embedded APK
+            excludes += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE',
+                'META-INF/LICENSE.txt',
+                'META-INF/NOTICE',
+                'META-INF/NOTICE.txt',
+                // Cordova scaffolding that may be present but unused when no plugin uses it
+                'cordova.js',
+                'cordova_plugins.js'
+            ]
+        }
+        // INVARIANT: extract native libraries (extractNativeLibs="true"). The
+        // phone runtime execs libproot*.so and binds nativeLibraryDir into the
+        // guest for libomppulse.so; libraries left inside the APK are not
+        // files and cannot be exec'd.
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
+    // Keep lint from breaking release on translation warnings (we strip them intentionally)
+    lint {
+        disable 'MissingTranslation'
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    // Explicit pin for NotificationCompat / Bubbles / shortcuts (transitively present via appcompat,
+    // but pinned explicitly so AndroidService's minSdk 22 + 1.12.0 contract is obvious and not drifted).
+    // Asked AndroidService: uses HttpURLConnection (no OkHttp), needs androidx.core 1.12.0 only.
+    implementation "androidx.core:core:$androidxCoreVersion"
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+// cap copy writes generated assets. The Capacitor server.url is never baked:
+// the shell derives it per run mode at startup (NativeConfig.capConfig), and a
+// public build has no URL to bake. Strip any left by an older build so the
+// asset can only ever mean "bundled app". offline.html still gets the baked
+// laptop URL (or "") for its retry link.
+tasks.register("prepareCapacitorAssets") {
+    doLast {
+        def configFile = file("src/main/assets/capacitor.config.json")
+        if (!configFile.exists()) throw new GradleException("Run npx cap copy android before building")
+        def config = new groovy.json.JsonSlurper().parse(configFile)
+        if (config.server instanceof Map) {
+            config.server.remove('url')
+            config.server.remove('cleartext')
+            if (config.server.isEmpty()) config.remove('server')
+        }
+        configFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(config))
+        def fallback = file("src/main/assets/public/offline.html")
+        def sourceFallback = rootProject.file("../../web/public/offline.html")
+        if (sourceFallback.exists()) fallback.text = sourceFallback.text.replace("__OMP_PULSE_SERVER_URL__", nativeServerUrl)
+    }
+}
+preBuild.dependsOn("prepareCapacitorAssets")
+
+// Every APK can run omp on the phone, so every build needs the runtime. Fail
+// here, naming the fix, instead of shipping an app whose phone mode reports
+// "unsupported" on every device.
+tasks.register("checkRuntimeInputs") {
+    def vendorFix = "restore the committed proot prebuilts (mobile/android/vendor/proot/PROVENANCE.md)"
+    def required = [
+        (new File(runtimeJniDir, "arm64-v8a/libomppulse.so")):
+            "build the on-device daemon: scripts/android/build-runtime.sh",
+        (new File(vendorJniDir, "arm64-v8a/libproot.so")): vendorFix,
+        (new File(vendorJniDir, "arm64-v8a/libproot-loader.so")): vendorFix,
+        (new File(vendorJniDir, "arm64-v8a/libtalloc.so")): vendorFix,
+        (new File(vendorJniDir, "arm64-v8a/libandroid-shmem.so")): vendorFix,
+        (file("src/main/assets/runtime/runtime.json")):
+            "restore the committed runtime pins (maintained by scripts/android/runtime-pins.mjs)",
+    ]
+    doLast {
+        def missing = required.findAll { f, fix -> !f.isFile() }
+        if (missing) {
+            throw new GradleException("Missing phone runtime inputs:\n" +
+                missing.collect { f, fix -> "  ${f}\n    → ${fix}" }.join("\n"))
+        }
+    }
+}
+preBuild.dependsOn("checkRuntimeInputs")
+
+tasks.register("packageHarnessSeed") {
+    inputs.files(harnessSeedFiles).withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.dir(harnessAssetsDir)
+    doLast {
+        if (!new File(harnessDir, "agent/AGENTS.md").isFile()) {
+            throw new GradleException("Missing phone harness seed: ${harnessDir} (the repo's phone-harness/ directory)")
+        }
+        project.delete(harnessAssetsDir)
+        def blobs = new File(harnessAssetsDir, "phone/harness")
+        blobs.mkdirs()
+        // Modes do not survive in assets, so the manifest records the exec bit. Windows has no
+        // exec bit (canExecute is always true); there a shebang decides, which matches every
+        // executable in phone-harness/ today.
+        def windows = File.separatorChar == ('\\' as char)
+        def entries = new TreeMap<String, String>()
+        harnessSeedFiles.files.each { File f ->
+            def rel = harnessDir.toPath().relativize(f.toPath()).toString().replace(File.separatorChar, '/' as char)
+            def bytes = f.bytes
+            def sha = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).encodeHex().toString()
+            def blob = new File(blobs, sha)
+            if (!blob.exists()) blob.bytes = bytes
+            def exec = windows ? (bytes.length >= 2 && bytes[0] == ('#' as char) && bytes[1] == ('!' as char)) : f.canExecute()
+            entries[rel] = "${sha} ${exec ? '755' : '644'} ${rel}"
+        }
+        new File(harnessAssetsDir, "phone/harness.manifest").text = entries.values().join("\n") + "\n"
+    }
+}
+preBuild.dependsOn("packageHarnessSeed")

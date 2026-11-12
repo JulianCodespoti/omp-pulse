@@ -1,0 +1,113 @@
+package com.omppulse.app.runtime;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InterruptedIOException;
+import java.net.HttpURLConnection;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+
+final class DaemonClientFixture {
+    // EXACT_BUSY_CLIENT
+
+    private static FakeConnection connection;
+    private static String requested;
+    private static Runnable beforePublish;
+    private static boolean malformed;
+    private static int assertions;
+    private String origin() { return "http://127.0.0.1:4321"; }
+    private static final class URL {
+        URL(String value) { requested = value; }
+        java.net.URLConnection openConnection() { return connection; }
+    }
+    private static final class RuntimeIo {
+        static String drain(InputStream input) throws IOException {
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+    private static final class JSONException extends Exception {
+        private static final long serialVersionUID = 1L;
+        JSONException() { super("synthetic invalid JSON"); }
+    }
+    private static final class JSONObject {
+        JSONObject(String text) throws JSONException {
+            if (malformed) throw new JSONException();
+            check("response".equals(text), "reads exact response body");
+        }
+        boolean getBoolean(String key) { check("busy".equals(key), "busy response key"); return true; }
+        long getLong(String key) { check("version".equals(key), "version response key"); return 42; }
+    }
+    private static final class FakeConnection extends HttpURLConnection {
+        final Map<String, String> headers = new HashMap<>();
+        boolean disconnected;
+        boolean bodyClosed;
+        boolean requestedResponse;
+        int code = 200;
+        FakeConnection() throws Exception { super(java.net.URI.create("http://127.0.0.1/unused").toURL()); }
+        @Override public void connect() { throw new AssertionError("host test must not connect"); }
+        @Override public boolean usingProxy() { return false; }
+        @Override public void disconnect() { disconnected = true; }
+        @Override public void setRequestProperty(String key, String value) {
+            headers.put(key, value);
+            if (beforePublish != null) beforePublish.run();
+        }
+        @Override public int getResponseCode() { requestedResponse = true; return code; }
+        @Override public InputStream getInputStream() {
+            return new java.io.ByteArrayInputStream("response".getBytes(StandardCharsets.UTF_8)) {
+                @Override public void close() throws IOException { bodyClosed = true; super.close(); }
+            };
+        }
+    }
+    private static void check(boolean condition, String message) {
+        assertions++;
+        if (!condition) throw new AssertionError(message);
+    }
+    private static void expectFailure(DaemonClientFixture client, BusyWatchControl owner) throws Exception {
+        try {
+            client.busy("secret", -1, 240, owner);
+            throw new AssertionError("expected transport failure");
+        } catch (IOException expected) {
+            check(connection.disconnected, "failed transport closed");
+        }
+    }
+    public static void main(String[] args) throws Exception {
+        DaemonClientFixture client = new DaemonClientFixture();
+        connection = new FakeConnection();
+        BusyWatchControl first = new BusyWatchControl();
+        Busy result = client.busy("secret", -1, 240, first);
+        check(result.busy && result.version == 42, "busy and version decoded");
+        check(requested.equals("http://127.0.0.1:4321/api/busy?wait=240"), "initial snapshot omits after");
+        check("Bearer secret".equals(connection.headers.get("Authorization")), "phone token authenticates poll");
+        check(connection.getConnectTimeout() == 3000 && connection.getReadTimeout() == 300000,
+                "bounded read outlasts daemon long poll");
+        check(!connection.getInstanceFollowRedirects() && !connection.getUseCaches(),
+                "no credential redirects or cached work snapshots");
+        check(connection.bodyClosed && connection.disconnected && first.stop() == null,
+                "success closes stream and clears connection owner");
+        connection = new FakeConnection();
+        client.busy("secret", 42, 240, new BusyWatchControl());
+        check(requested.endsWith("?wait=240&after=42"), "subsequent poll sends last version");
+        for (int code : new int[]{301, 401, 403, 503}) {
+            connection = new FakeConnection();
+            connection.code = code;
+            expectFailure(client, new BusyWatchControl());
+        }
+        malformed = true;
+        connection = new FakeConnection();
+        expectFailure(client, new BusyWatchControl());
+        malformed = false;
+        BusyWatchControl stopped = new BusyWatchControl();
+        connection = new FakeConnection();
+        beforePublish = stopped::stop;
+        try {
+            client.busy("secret", -1, 240, stopped);
+            throw new AssertionError("stopped generation unexpectedly read HTTP");
+        } catch (InterruptedIOException expected) {
+            check(!connection.requestedResponse && connection.disconnected,
+                    "stop just before publication prevents blocking HTTP read");
+        }
+        beforePublish = null;
+        System.out.println("PASS " + assertions + " authenticated busy-client assertions");
+    }
+}

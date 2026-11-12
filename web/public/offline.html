@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>omp pulse — can't connect</title>
+  <!--
+      Capacitor loads this page when the WebView cannot reach `server.url`
+      (Bridge.java:287 getErrorUrl). Without it the app renders a blank white
+      screen and says nothing at all, which is exactly what a fresh install
+      showed on the handset when Tailscale happened to be disconnected: no
+      message, no retry, no clue.
+
+      Deliberately self-contained — no fonts, no scripts, no assets from the
+      daemon. Every one of those is unreachable in the situation this page
+      exists for. The tokens are copied from web/src/styles.css so it does not
+      look like a different application.
+
+      The wording depends on what this install knows: in phone mode the
+      daemon is the on-phone one; with a laptop address, the laptop; with
+      neither (a public build nobody pointed at a laptop) there is nothing to
+      troubleshoot, so the page offers the phone and never mentions laptop
+      plumbing like Tailscale or systemd.
+    -->
+  <style>
+    :root {
+      --background: oklch(0.195 0.008 275);
+      --foreground: oklch(0.94 0.008 275);
+      --muted-foreground: oklch(0.70 0.015 275);
+      --border: oklch(0.32 0.015 275);
+      --danger-text: oklch(0.70 0.17 27);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      background: var(--background);
+      color: var(--foreground);
+      font-family:
+        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    main {
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 1.25rem;
+      padding: 2rem 1.5rem calc(2rem + env(safe-area-inset-bottom));
+      max-width: 30rem;
+      margin: 0 auto;
+    }
+
+    .mark {
+      font-size: 1.5rem;
+      line-height: 1;
+      opacity: 0.5;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.375rem;
+      line-height: 1.25;
+      letter-spacing: -0.01em;
+      font-weight: 600;
+    }
+
+    p {
+      margin: 0;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      color: var(--muted-foreground);
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 1.1rem;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+      color: var(--muted-foreground);
+    }
+
+    li+li {
+      margin-top: 0.25rem;
+    }
+
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    button {
+      appearance: none;
+      min-height: 3rem;
+      padding: 0 1.25rem;
+      border-radius: 0.75rem;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--foreground);
+      font: inherit;
+      font-size: 0.9375rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    button.primary {
+      border-color: transparent;
+      background: var(--foreground);
+      color: var(--background);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+    }
+
+    button:active {
+      transform: scale(0.98);
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.875em;
+      color: var(--foreground);
+    }
+
+    .host {
+      font-size: 0.8125rem;
+      color: var(--muted-foreground);
+      word-break: break-all;
+    }
+
+    .error {
+      color: var(--danger-text);
+    }
+
+    /* The way back out of a computer that cannot be reached: scanning a code
+       used to leave the app on this page with no way home. */
+    #back {
+      position: fixed;
+      top: calc(0.5rem + env(safe-area-inset-top));
+      left: 0.5rem;
+      width: 2.75rem;
+      min-height: 2.75rem;
+      padding: 0;
+      border: 0;
+      border-radius: 999px;
+      font-size: 1.375rem;
+    }
+
+    button.link {
+      border: 0;
+      min-height: 2.75rem;
+      color: var(--muted-foreground);
+      font-weight: 400;
+    }
+  </style>
+</head>
+
+<body>
+  <button id="back" type="button" aria-label="Back to this phone" hidden>&larr;</button>
+  <main>
+    <div class="mark">◐</div>
+    <h1 id="title">Can't connect</h1>
+    <p id="lead">The app couldn't connect.</p>
+    <div class="actions">
+      <button id="primary" class="primary" type="button">Try again</button>
+      <button id="secondary" type="button" hidden></button>
+      <button id="change" class="link" type="button" hidden>Connect a different computer</button>
+    </div>
+    <p class="host" id="status" aria-live="polite"></p>
+    <p class="host" id="host"></p>
+  </main>
+  <script>
+    // The deployment pipeline substitutes the selected endpoint before
+    // embedding this page in the daemon and APK (empty on public builds).
+    // Keep the current hash on every navigation: #pair=CODE and #s=... are
+    // user intent, not disposable navigation.
+    var BAKED_URL = "__OMP_PULSE_SERVER_URL__";
+    var local = window.OmpLocal && typeof window.OmpLocal.state === "function" ? window.OmpLocal : null;
+    function localState() {
+      try {
+        var s = JSON.parse(local.state());
+        // An origin the shell does not trust gets "{}": no state at all.
+        return s && typeof s.mode === "string" ? s : null;
+      } catch (_) {return null;}
+    }
+    function isUrl(u) {return typeof u === "string" && /^https?:\/\//.test(u);}
+    function byId(id) {return document.getElementById(id);}
+    function setText(id, text) {byId(id).textContent = text;}
+    function go(url) {window.location.replace(url + (window.location.hash || ""));}
+    function sizeLabel(bytes) {
+      return bytes >= 1e9 ? (bytes / 1e9).toFixed(1) + " GB" : Math.max(1, Math.round(bytes / 1e6)) + " MB";
+    }
+
+    var state = local ? localState() : null;
+    var phoneMode = !!(state && state.mode === "phone");
+    var laptopUrl = state && isUrl(state.laptopUrl) ? state.laptopUrl : isUrl(BAKED_URL) ? BAKED_URL : null;
+    var canRunHere = !!(state && state.supported && !phoneMode);
+    var primary = byId("primary");
+    var secondary = byId("secondary");
+    // Not `status`: a top-level `var status` is window.status, which coerces
+    // the element to a string, so every status update threw.
+    var statusEl = byId("status");
+
+    // Starts (installing first if needed) the on-phone runtime, reporting
+    // progress in the status line, then hands off once it answers.
+    function startOnPhone(button, onReady) {
+      button.disabled = true;
+      statusEl.classList.remove("error");
+      local.prepare();
+      var timer = setInterval(function () {
+        var s = localState();
+        if (!s) return;
+        if (s.phase === "ready") {clearInterval(timer); onReady(s); return;}
+        if (s.phase === "error") {
+          clearInterval(timer);
+          button.disabled = false;
+          statusEl.classList.add("error");
+          statusEl.textContent = s.error || "omp could not start on this phone.";
+          return;
+        }
+        statusEl.textContent = (s.message || "Preparing") + (s.progress >= 0 ? " · " + s.progress + "%" : "…");
+      }, 500);
+    }
+    function offerPhone(button, label) {
+      button.hidden = false;
+      button.textContent = label;
+      button.addEventListener("click", function () {
+        startOnPhone(button, function () {local.setMode("phone");});
+      });
+      if (state.downloadBytes > 0) statusEl.textContent = "One-time " + sizeLabel(state.downloadBytes) + " download.";
+    }
+
+    if (phoneMode) {
+      setText("title", "omp didn't start");
+      setText("lead", "omp on this phone isn't answering yet.");
+      if (state.error) {statusEl.classList.add("error"); statusEl.textContent = state.error;}
+      primary.addEventListener("click", function () {
+        startOnPhone(primary, function (s) {
+          if (isUrl(s.appUrl)) go(s.appUrl);
+          else window.location.reload();
+        });
+      });
+      if (laptopUrl) {
+        secondary.hidden = false;
+        secondary.textContent = "Use your computer";
+        secondary.addEventListener("click", function () {local.setMode("laptop");});
+      }
+    } else if (laptopUrl) {
+      // Two choices, not five: try again, or go back to where you were. The
+      // usual cause on a phone is Tailscale being off, so say that plainly;
+      // the shell reloads by itself when the network changes.
+      setText("title", "Can't reach your computer");
+      setText("lead", "Check Tailscale is switched on on this phone. Pulse reconnects by itself once it is.");
+      setText("host", laptopUrl);
+      primary.addEventListener("click", function () {go(laptopUrl);});
+      if (state && local) {
+        var back = byId("back");
+        back.hidden = false;
+        back.addEventListener("click", function () {
+          // Back to the phone when it can run omp, else to the first screen.
+          if (canRunHere) startOnPhone(back, function () {local.setMode("phone");});
+          else local.setMode("unset");
+        });
+      }
+      // A typo'd address is otherwise a dead end: Settings needs a paired app.
+      // "unset" restarts into onboarding, whose laptop step connects anew.
+      // Builds with a baked URL fall back to laptop mode on "unset", so there
+      // it would only reload this page.
+      if (state && !isUrl(BAKED_URL)) {
+        var change = byId("change");
+        change.hidden = false;
+        change.addEventListener("click", function () {local.setMode("unset");});
+      }
+    } else if (canRunHere) {
+      // Nothing to retry: no laptop was ever set up on this install.
+      setText("title", "Run omp on this phone");
+      setText("lead", "No computer is connected. omp can run right here instead.");
+      offerPhone(primary, "Run on this phone");
+    } else {
+      primary.addEventListener("click", function () {window.location.reload();});
+    }
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,19 @@
+#!/bin/sh
+# phone-harness shim (linked as /usr/local/bin/cargo): builds and tests started from
+# scripts go through the machine-wide job broker (bin/heavy); dependencies compile once
+# for every worktree and project through sccache when it is installed.
+# Straight to the real cargo: inside a brokered job, HEAVY=off, or a light subcommand.
+REAL=/usr/bin/cargo
+# sccache refuses incremental builds (exits 101), so those keep plain rustc.
+if [ -z "${RUSTC_WRAPPER+x}" ] && [ "${CARGO_INCREMENTAL:-0}" = 0 ] && command -v sccache >/dev/null 2>&1; then
+  export RUSTC_WRAPPER=sccache SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-4G}"  # phones have little free disk
+fi
+if [ -z "$HEAVY_JOB_ID" ] && [ "$HEAVY" != off ]; then
+  sub=$1
+  case "$sub" in +*) sub=$2 ;; esac
+  case "$sub" in
+    build|b|test|t|check|c|clippy|bench|doc|install|nextest|rustc|llvm-cov)
+      exec /root/projects/phone-harness/bin/heavy run -- "$REAL" "$@" ;;
+  esac
+fi
+exec "$REAL" "$@"

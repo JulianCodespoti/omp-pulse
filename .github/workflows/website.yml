@@ -1,0 +1,83 @@
+# Hosted static website build and deployment to GitHub Pages.
+#
+# Runs automatically when website/ changes on main, when a release is published,
+# or on manual workflow_dispatch. Requires Pages to be enabled in repository
+# settings (Source: GitHub Actions) before the deploy job runs; if Pages is not
+# yet enabled on a fork or pre-launch repository, the build job still validates
+# the static site artifact on every push and PR.
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "CHANGELOG.md"
+      - "docs/**"
+      - "README.md"
+      - ".github/workflows/website.yml"
+  pull_request:
+    paths:
+      - "website/**"
+      - "CHANGELOG.md"
+      - "docs/**"
+      - "README.md"
+      - ".github/workflows/website.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build website
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web workspace dependencies
+        run: npm ci --prefix web --no-audit --no-fund
+      - name: Build & verify static site
+        run: |
+          node website/build.mjs
+          node --test website/site.test.mjs
+      - uses: actions/upload-artifact@v7
+        with:
+          name: website-dist
+          path: website/dist
+          if-no-files-found: error
+
+  deploy:
+    name: Publish to GitHub Pages
+    if: github.event_name != 'pull_request' && vars.OMP_PULSE_PAGES_ENABLED == '1'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: website-dist
+          path: website/dist
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: website/dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

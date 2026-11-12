@@ -1,0 +1,15 @@
+#!/bin/sh
+# phone-harness shim (linked as /usr/local/bin/node): `node --test` runs started from
+# scripts go through the machine-wide job broker (bin/heavy). Everything else, and any
+# node inside a brokered job, execs the real node directly.
+REAL=/usr/bin/node
+if [ -z "$HEAVY_JOB_ID" ] && [ "$HEAVY" != off ]; then
+  for a in "$@"; do
+    case "$a" in
+      --test | --test=*) exec /root/projects/phone-harness/bin/heavy run -- "$REAL" "$@" ;;
+      -*) ;;
+      *) break ;;
+    esac
+  done
+fi
+exec "$REAL" "$@"

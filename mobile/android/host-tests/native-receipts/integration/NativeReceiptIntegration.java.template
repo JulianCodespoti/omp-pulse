@@ -1,0 +1,812 @@
+package com.omppulse.app;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.json.JSONTokener;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.io.File;
+import java.util.Locale;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.Delayed;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
+/** Exact source methods; all Android, SQL, executor and transport boundaries are synthetic. */
+final class NativeOutbox {
+    private static final String TAG="fixture";
+    // EXACT_SOURCE_CONSTANTS
+    private static final String TOKEN="synthetic-token";
+    private static final String ORIGIN="https://fixture.invalid";
+    private static final String ID="fixture id/α";
+    private static final String RAW="/fixture/alias +?#/α.jsonl";
+    private static final String CANONICAL="/fixture/canonical/α.jsonl";
+    private static final String OTHER="/fixture/other/α.jsonl";
+    private static String versionVerifiedOrigin;
+    private static long versionVerifiedAt;
+    private static final Context CONTEXT=new Context();
+    private static final Set<StatusKey> STATUS_KEYS=new HashSet<>();
+    private static final TestExecutor STATUS=new TestExecutor();
+    private static final TestDeadlines DEADLINES=new TestDeadlines();
+    private static final List<String> COMMAND_COLUMNS=Arrays.asList("namespace","origin","command_id","session_path","text","created_at","updated_at","state","receipt","receipt_binding","receipt_revision","error","edit_token","legacy","may_post","payload_hash","payload_bytes","notification_reply","notify_title","notify_body","notify_kind","notify_tag","delivery");
+    // Current-schema fixture used to exercise production queries. Declared before DB:
+    // static initializers run in order.
+    private static final Map<String,List<String>> CURRENT_SCHEMA=new LinkedHashMap<>();
+    static {
+        CURRENT_SCHEMA.put("commands",COMMAND_COLUMNS);
+        CURRENT_SCHEMA.put("attachments",Arrays.asList("namespace","origin","command_id","image_index","mime_type","file_path","byte_count"));
+        CURRENT_SCHEMA.put("tombstones",Arrays.asList("namespace","origin","command_id","created_at"));
+        CURRENT_SCHEMA.put("clear_markers",Arrays.asList("namespace","origin","session_path","clear_at"));
+    }
+    private static final SQLiteDatabase DB=new SQLiteDatabase();
+    private static String token=TOKEN;
+    private static String endpoint=ORIGIN;
+    private static String namespace;
+    private static int assertions, gets, posts, wakes, jobs, rearms, claims, versions, notifications, closed, logs;
+    private static int status=200, postStatus=200;
+    private static JSONObject response;
+    private static JSONObject postResponse;
+    private static Runnable onResponse, onBegin, beforeUpdate, onTokenRead, beforeClaim, beforeRearm;
+    private static boolean failTransport, failNotification;
+    private static final List<HttpURLConnection> connections=new ArrayList<>();
+    private static final List<String> deletedFiles=new ArrayList<>();
+    private static final Map<String,String> imageFiles=new LinkedHashMap<>();
+
+    private static final class Context {}
+    // Recovery filesystem/lifecycle is tested separately; receipt fixtures preserve only its boundary.
+    private static final class NativeAttachmentRecovery {
+        static final java.util.concurrent.locks.ReentrantLock OWNERSHIP = new java.util.concurrent.locks.ReentrantLock();
+        static void beforeDatabaseCreate(Context context) {}
+    }
+    private static boolean stagedPending, failStaging, expectCleanupOwnership;
+    private abstract static class SQLiteOpenHelper {
+        final int configuredVersion;
+        SQLiteOpenHelper(Context c,String name,Object factory,int version) { configuredVersion=version; }
+        public abstract void onCreate(SQLiteDatabase db);
+        public abstract void onUpgrade(SQLiteDatabase db,int oldVersion,int newVersion);
+    }
+    private static final class TokenStore {
+        static String getToken(Context context) { if(onTokenRead!=null) { Runnable run=onTokenRead; onTokenRead=null; run.run(); } return token; }
+    }
+    private static final class NativeConfig {
+        static final int MIN_CLIENT_PROTOCOL_VERSION=3, PROTOCOL_VERSION=3;
+        static String appUrl(Context context) { return endpoint; }
+    }
+    private static final class Log { static void w(String tag,String text,Throwable error) { logs++; } }
+    private static final class SystemClock { static long now; static long elapsedRealtime() { return now; } }
+    private static final class NativeOutboxJob { static void schedule(Context context,long delay) { jobs++; } }
+    private static final class NotificationHelper {
+        static void actionResult(Context c,String p,String t,String b,String k,String tag,String text,String err) {
+            notifications++; if(failNotification) throw new IllegalStateException("synthetic notification failure");
+        }
+    }
+    private static final class TestExecutor {
+        final List<Runnable> queued=new ArrayList<>(); boolean reject;
+        void execute(Runnable task) { if(reject) throw new RejectedExecutionException("synthetic rejection"); queued.add(task); }
+        void runOne() { queued.remove(0).run(); }
+        void runAll() { while(!queued.isEmpty()) runOne(); }
+    }
+    private static final class TestFuture implements ScheduledFuture<Void> {
+        boolean cancelled;
+        @Override public boolean cancel(boolean interrupt) { cancelled=true; return true; }
+        @Override public boolean isCancelled() { return cancelled; }
+        @Override public boolean isDone() { return cancelled; }
+        @Override public Void get() { return null; }
+        @Override public Void get(long timeout,TimeUnit unit) { return null; }
+        @Override public long getDelay(TimeUnit unit) { return 0; }
+        @Override public int compareTo(Delayed other) { return 0; }
+    }
+    private static final class TestDeadlines {
+        final List<Runnable> callbacks=new ArrayList<>();
+        ScheduledFuture<?> schedule(Runnable action,long delay,TimeUnit unit) { callbacks.add(action); return new TestFuture(); }
+    }
+    private static final class URL {
+        final String value; final java.net.URI uri;
+        URL(String value) { this.value=value; uri=java.net.URI.create(value); }
+        String getProtocol() { return uri.getScheme(); }
+        String getAuthority() { return uri.getRawAuthority(); }
+        Object openConnection() { HttpURLConnection c=new HttpURLConnection(value); connections.add(c); return c; }
+    }
+    private static final class HttpURLConnection {
+        final String url; final Map<String,String> headers=new LinkedHashMap<>();
+        String method; boolean useCaches=true, redirects=true, disconnected; int connectTimeout,readTimeout;
+        final ByteArrayOutputStream sent=new ByteArrayOutputStream();
+        HttpURLConnection(String url) { this.url=url; }
+        void setInstanceFollowRedirects(boolean value) { redirects=value; }
+        void setUseCaches(boolean value) { useCaches=value; }
+        void setRequestProperty(String name,String value) { headers.put(name,value); }
+        void setRequestMethod(String value) { method=value; if(value.equals("POST")) posts++; else if(url.endsWith("/api/version")) versions++; else gets++; }
+        void setConnectTimeout(int value) { connectTimeout=value; }
+        void setReadTimeout(int value) { readTimeout=value; }
+        void setDoOutput(boolean value) {}
+        void setChunkedStreamingMode(int value) {}
+        OutputStream getOutputStream() { return sent; }
+        int getResponseCode() throws IOException {
+            if(onResponse!=null) { Runnable run=onResponse; onResponse=null; run.run(); }
+            if(failTransport) throw new IOException("synthetic timeout");
+            return method.equals("POST") ? postStatus : status;
+        }
+        InputStream getInputStream() { JSONObject body=method.equals("POST") ? postResponse : response; return new ByteArrayInputStream((body==null ? "" : body.toString()).getBytes(StandardCharsets.UTF_8)); }
+        InputStream getErrorStream() { return getInputStream(); }
+        void disconnect() { if(!disconnected) { disconnected=true; closed++; } }
+    }
+    private static final class ContentValues {
+        final Map<String,Object> values=new LinkedHashMap<>();
+        void put(String key,String value) { values.put(key,value); }
+        void put(String key,int value) { values.put(key,value); }
+        void put(String key,long value) { values.put(key,value); }
+        void putNull(String key) { values.put(key,null); }
+    }
+    private static final class Cursor implements AutoCloseable {
+        final List<Map<String,Object>> rows; final List<String> columns; int position=-1;
+        Cursor(List<Map<String,Object>> rows,String[] columns) {
+            this.rows=rows; this.columns=columns==null ? new ArrayList<>(COMMAND_COLUMNS) : Arrays.asList(columns);
+        }
+        boolean moveToFirst() { position=0; return !rows.isEmpty(); }
+        boolean moveToNext() { position++; return position<rows.size(); }
+        int getColumnIndexOrThrow(String key) { int i=columns.indexOf(key); if(i<0) throw new IllegalArgumentException(key); return i; }
+        Object value(int i) { return rows.get(position).get(columns.get(i)); }
+        String getString(int i) { Object v=value(i); return v==null ? null : v.toString(); }
+        long getLong(int i) { Object v=value(i); return v==null ? 0 : ((Number)v).longValue(); }
+        int getInt(int i) { return (int)getLong(i); }
+        boolean isNull(int i) { return value(i)==null; }
+        @Override public void close() {}
+    }
+    private static final class SQLiteDatabase {
+        Map<String,List<Map<String,Object>>> tables=new LinkedHashMap<>();
+        Map<String,List<Map<String,Object>>> backup; boolean success,failQuery;
+        final List<String> ddl=new ArrayList<>();
+        // Table name -> column names, as PRAGMA table_info reports them; changed only by CREATE/ALTER.
+        final Map<String,List<String>> schema=new LinkedHashMap<>();
+        static final java.util.regex.Pattern CREATE_TABLE=java.util.regex.Pattern.compile("CREATE TABLE (\\w+)\\((.*)\\)");
+        static final java.util.regex.Pattern ADD_COLUMN=java.util.regex.Pattern.compile("ALTER TABLE (\\w+) ADD COLUMN (\\w+)(?: .*)?");
+        static final java.util.regex.Pattern TABLE_INFO=java.util.regex.Pattern.compile("PRAGMA table_info\\((\\w+)\\)");
+        SQLiteDatabase() { reset(); }
+        void reset() {
+            failQuery=false; ddl.clear(); tables.clear(); for(String table:new String[]{"commands","attachments","tombstones","clear_markers"}) tables.put(table,new ArrayList<>()); backup=null;
+            schema.clear(); for(Map.Entry<String,List<String>> entry:CURRENT_SCHEMA.entrySet()) schema.put(entry.getKey(),new ArrayList<>(entry.getValue()));
+        }
+        SQLiteDatabase getReadableDatabase() { return this; }
+        SQLiteDatabase getWritableDatabase() { return this; }
+        Map<String,List<Map<String,Object>>> copy() {
+            Map<String,List<Map<String,Object>>> result=new LinkedHashMap<>();
+            for(Map.Entry<String,List<Map<String,Object>>> entry:tables.entrySet()) { List<Map<String,Object>> rows=new ArrayList<>(); for(Map<String,Object> row:entry.getValue()) rows.add(new LinkedHashMap<>(row)); result.put(entry.getKey(),rows); }
+            return result;
+        }
+        void beginTransaction() { if(onBegin!=null) { Runnable run=onBegin; onBegin=null; run.run(); } if(backup!=null) throw new AssertionError("nested synthetic transaction"); backup=copy(); success=false; }
+        void setTransactionSuccessful() { success=true; }
+        void endTransaction() {
+            if(stagedPending && !NativeAttachmentRecovery.OWNERSHIP.isHeldByCurrentThread()) throw new AssertionError("insert released ownership before transaction end");
+            if(!success) tables=backup; backup=null; stagedPending=false;
+        }
+        boolean match(Map<String,Object> row,String where,String[] args) {
+            if(where==null) return true;
+            int index=0;
+            for(String clause:where.split(" AND ")) {
+                if(clause.endsWith("=?")) { String key=clause.substring(0,clause.length()-2); if(!Objects.equals(String.valueOf(row.get(key)),args[index++])) return false; }
+                else if(clause.equals("state='dispatching'")) { if(!"dispatching".equals(row.get("state"))) return false; }
+                else if(clause.equals("state NOT IN ('completed','forwarded','failed')")) { if(isTerminal(String.valueOf(row.get("state")))) return false; }
+                else if(clause.equals("edit_token IS NULL")) { if(row.get("edit_token")!=null) return false; }
+                else throw new AssertionError("unsupported synthetic SQL predicate: "+clause);
+            }
+            return true;
+        }
+        Cursor query(String table,String[] columns,String where,String[] args,String group,String having,String order) { return query(table,columns,where,args,group,having,order,null); }
+        Cursor query(String table,String[] columns,String where,String[] args,String group,String having,String order,String limit) {
+            if(failQuery) throw new IllegalStateException("synthetic SQLite read failure");
+            List<Map<String,Object>> rows=new ArrayList<>();
+            for(Map<String,Object> row:tables.get(table)) if(match(row,where,args)) rows.add(new LinkedHashMap<>(row));
+            return new Cursor(rows,columns==null ? schema.get(table).toArray(new String[0]) : columns);
+        }
+        Cursor rawQuery(String sql,String[] args) {
+            java.util.regex.Matcher info=TABLE_INFO.matcher(sql);
+            if(info.matches()) {
+                // SQLite answers one row per column (cid,name,...) and no rows for an unknown table.
+                if(args!=null) throw new AssertionError("PRAGMA table_info takes no bind arguments");
+                List<Map<String,Object>> rows=new ArrayList<>(); List<String> columns=schema.getOrDefault(info.group(1),new ArrayList<>());
+                for(int i=0;i<columns.size();i++) { Map<String,Object> row=new LinkedHashMap<>(); row.put("cid",(long)i); row.put("name",columns.get(i)); rows.add(row); }
+                return new Cursor(rows,new String[]{"cid","name"});
+            }
+            if(sql.startsWith("SELECT mime_type,file_path FROM attachments ")) {
+                return query("attachments",new String[]{"mime_type","file_path"},
+                        "namespace=? AND origin=? AND command_id=?",args,null,null,"image_index ASC");
+            }
+            if(sql.startsWith("SELECT COUNT(*),COALESCE(SUM(")) {
+                String table=sql.contains(" FROM commands ") ? "commands" : "attachments";
+                long count=0,sum=0;
+                for(Map<String,Object> row:tables.get(table)) {
+                    boolean matching=Objects.equals(row.get("namespace"),args[0]) && Objects.equals(row.get("origin"),args[1]);
+                    if(args.length==3) matching &= Objects.equals(row.get("command_id"),args[2]);
+                    if(table.equals("commands")) matching &= !isTerminal(String.valueOf(row.get("state")));
+                    if(matching) { count++; sum+=((Number)row.get(table.equals("commands") ? "payload_bytes" : "byte_count")).longValue(); }
+                }
+                Map<String,Object> row=new LinkedHashMap<>(); row.put("count",count); row.put("sum",sum);
+                return new Cursor(Arrays.asList(row),new String[]{"count","sum"});
+            }
+            if(sql.startsWith("SELECT MAX(clear_at)")) {
+                Long latest=null;
+                for(Map<String,Object> row:tables.get("clear_markers")) if(Objects.equals(row.get("namespace"),args[0]) && Objects.equals(row.get("origin"),args[1]) && (Objects.equals(row.get("session_path"),"") || Objects.equals(row.get("session_path"),args[2]))) { long value=((Number)row.get("clear_at")).longValue(); latest=latest==null ? value : Math.max(value,latest); }
+                Map<String,Object> row=new LinkedHashMap<>(); row.put("max",latest); return new Cursor(Arrays.asList(row),new String[]{"max"});
+            }
+            throw new AssertionError("unsupported synthetic raw SQL: "+sql);
+        }
+        long insertOrThrow(String table,String nullHack,ContentValues values) {
+            Map<String,Object> row=new LinkedHashMap<>(values.values);
+            if(table.equals("commands")) { row.putIfAbsent("receipt_revision",0L); row.putIfAbsent("receipt_binding",null); for(Map<String,Object> old:tables.get(table)) if(sameKey(row,old)) throw new IllegalStateException("duplicate key"); }
+            tables.get(table).add(row); return 1;
+        }
+        boolean sameKey(Map<String,Object> a,Map<String,Object> b) { return Objects.equals(a.get("namespace"),b.get("namespace")) && Objects.equals(a.get("origin"),b.get("origin")) && Objects.equals(a.get("command_id"),b.get("command_id")); }
+        int update(String table,ContentValues values,String where,String[] args) {
+            if(beforeUpdate!=null) { Runnable run=beforeUpdate; beforeUpdate=null; run.run(); }
+            int changed=0; for(Map<String,Object> row:tables.get(table)) if(match(row,where,args)) { row.putAll(values.values); changed++; } return changed;
+        }
+        int delete(String table,String where,String[] args) { int before=tables.get(table).size(); tables.get(table).removeIf(row -> match(row,where,args)); return before-tables.get(table).size(); }
+        void execSQL(String sql) {
+            ddl.add(sql);
+            java.util.regex.Matcher create=CREATE_TABLE.matcher(sql), alter=ADD_COLUMN.matcher(sql);
+            if(create.matches()) {
+                if(schema.containsKey(create.group(1))) throw new AssertionError("table "+create.group(1)+" already exists");
+                schema.put(create.group(1),columnNames(create.group(2)));
+            } else if(alter.matches()) {
+                List<String> columns=schema.get(alter.group(1));
+                if(columns==null) throw new AssertionError("no such table: "+alter.group(1));
+                if(columns.contains(alter.group(2))) throw new AssertionError("duplicate column name: "+alter.group(2));
+                columns.add(alter.group(2));
+            } else throw new AssertionError("unsupported synthetic DDL: "+sql);
+        }
+        static List<String> columnNames(String definitions) {
+            List<String> names=new ArrayList<>(); int depth=0,start=0;
+            for(int i=0;i<=definitions.length();i++) {
+                char c=i<definitions.length() ? definitions.charAt(i) : ',';
+                if(c=='(') depth++;
+                else if(c==')') depth--;
+                else if(c==',' && depth==0) { String definition=definitions.substring(start,i).trim(); if(!definition.startsWith("PRIMARY KEY")) names.add(definition.split(" ")[0]); start=i+1; }
+            }
+            return names;
+        }
+        void execSQL(String sql,Object[] args) {
+            String table; String[] columns;
+            if(sql.startsWith("INSERT OR IGNORE INTO tombstones")) { table="tombstones"; columns=new String[]{"namespace","origin","command_id","created_at"}; }
+            else if(sql.startsWith("INSERT OR REPLACE INTO clear_markers")) { table="clear_markers"; columns=new String[]{"namespace","origin","session_path","clear_at"}; }
+            else throw new AssertionError("unsupported synthetic execSQL: "+sql);
+            Map<String,Object> row=new LinkedHashMap<>(); for(int i=0;i<columns.length;i++) row.put(columns[i],args[i]); tables.get(table).add(row);
+        }
+    }
+    private static SQLiteDatabase database(Context context) { return DB; }
+    private static void wake() { wakes++; }
+    // The page change push is covered by host-tests/native-outbox-changes; count it only.
+    private static int changes;
+    private static void changed() { changes++; }
+    private static List<String> persistAttachments(Context context,List<PreparedImage> images,long deadline) {
+        if(!NativeAttachmentRecovery.OWNERSHIP.isHeldByCurrentThread()) throw new AssertionError("unprotected in-progress attachment staging");
+        if(failStaging) throw new IllegalStateException("synthetic staging failure");
+        stagedPending=true;
+        List<String> result=new ArrayList<>();
+        for(PreparedImage image:images) {
+            String path="/synthetic/attachment-"+UUID.randomUUID();
+            result.add(path); imageFiles.put(path,image.data);
+        }
+        return result;
+    }
+    private static void deleteFiles(List<String> paths) {
+        if(expectCleanupOwnership && !NativeAttachmentRecovery.OWNERSHIP.isHeldByCurrentThread()) throw new AssertionError("failed staging cleanup lost ownership");
+        deletedFiles.addAll(paths);
+        for(String path:paths) imageFiles.remove(path);
+    }
+    private static JSONObject request(HttpSession http,URL url,String ignored,String method,JSONObject body) throws Exception {
+        http.open(url,method); return new JSONObject().put("protocolVersion",3).put("minClientProtocolVersion",3);
+    }
+    private static String readTextFile(File file) throws IOException {
+        String data=imageFiles.get(file.getPath());
+        if(data==null) throw new IOException("Synthetic missing photo");
+        return data;
+    }
+    private static void copyFile(File file,OutputStream output,HttpSession http) throws Exception {
+        http.check(); output.write(readTextFile(file).getBytes(StandardCharsets.UTF_8));
+    }
+    // Counting wrappers forward exactly to the extracted production authority boundary.
+    private static StoredIntent claimForPost(Context c,String t,String e,StoredIntent expected) throws Exception { claims++; if(beforeClaim!=null) { Runnable run=beforeClaim; beforeClaim=null; run.run(); } return changePostingAuthority(c,t,e,expected,true); }
+    private static StoredIntent rearmForVerified404(Context c,String t,String e,StoredIntent expected) throws Exception { rearms++; if(beforeRearm!=null) { Runnable run=beforeRearm; beforeRearm=null; run.run(); } return changePostingAuthority(c,t,e,expected,false); }
+    private static void reportNotificationFailure(Context c,String n,String o,String id,String path,String text,String error) { notifications++; }
+    private static final class RejectedDeliveryException extends Exception {
+        private static final long serialVersionUID=1L;
+        RejectedDeliveryException(String text) { super(text); }
+    }
+
+    // EXACT_SOURCE_METHODS
+    // EXACT_BRIDGE_EXECUTE
+
+    private static JSONObject command(String id) { return new JSONObject().put("commandId",id).put("sessionPath",RAW).put("text","fixture payload α\n").put("images",new JSONArray()); }
+    private static JSONObject witness(String canonical) { return new JSONObject().put("version",1).put("requestedSessionPath",RAW).put("canonicalSessionPath",canonical); }
+    private static JSONObject envelope(String id,String canonical,String state,long created,long updated,boolean bound) {
+        JSONObject result=new JSONObject().put("ok",true).put("receipt",new JSONObject().put("commandId",id).put("sessionPath",canonical).put("state",state).put("createdAt",created).put("updatedAt",updated));
+        if(bound) result.put("receiptBinding",witness(canonical)); return result;
+    }
+    private static JSONObject envelope(String state) { return envelope(ID,CANONICAL,state,100,100,true); }
+    private static StoredIntent intent() { return readIntent(CONTEXT,namespace,ORIGIN,ID); }
+    private static Map<String,Object> row() { return DB.tables.get("commands").get(0); }
+    private static String snapshot() { return DB.tables.toString(); }
+    private static void reset() throws Exception {
+        if(NativeAttachmentRecovery.OWNERSHIP.isHeldByCurrentThread()) throw new AssertionError("ownership leaked across operations");
+        stagedPending=failStaging=expectCleanupOwnership=false;
+        DB.reset(); STATUS.queued.clear(); STATUS.reject=false; STATUS_KEYS.clear(); DEADLINES.callbacks.clear();
+        token=TOKEN; endpoint=ORIGIN; namespace=namespace(TOKEN); gets=posts=wakes=jobs=rearms=claims=versions=notifications=closed=logs=0;
+        status=postStatus=200; response=envelope("completed"); postResponse=envelope("completed");
+        onResponse=onBegin=beforeUpdate=onTokenRead=beforeClaim=beforeRearm=null; failTransport=failNotification=false; connections.clear(); deletedFiles.clear(); SystemClock.now=0;
+        imageFiles.clear();
+        versionVerifiedOrigin="status-must-preserve-version-cache"; versionVerifiedAt=3456;
+    }
+    private static InsertResult seed(String state,boolean mayPost,boolean legacy) throws Exception {
+        InsertResult result=insert(CONTEXT,ORIGIN,namespace,command(ID),false,false,Long.MAX_VALUE);
+        row().put("state",state); row().put("may_post",mayPost ? 1 : 0); row().put("legacy",legacy ? 1 : 0); return result;
+    }
+    private static void check(String label,boolean condition) { if(!condition) throw new AssertionError(label); assertions++; System.out.println("PASS "+label); }
+    private interface Checked { void run() throws Exception; }
+    private static void rejects(String label,Checked action) throws Exception { boolean rejected=false; try { action.run(); } catch(Exception expected) { rejected=true; } check(label,rejected); }
+    private static void noDelivery(String label) { check(label+" zero POST/wake/job/rearm/claim/version",posts==0 && wakes==0 && jobs==0 && rearms==0 && claims==0 && versions==0); check(label+" version cache unchanged", "status-must-preserve-version-cache".equals(versionVerifiedOrigin) && versionVerifiedAt==3456); }
+
+    private static void routingAndStatus() throws Exception {
+        reset(); JSONObject ack=enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE);
+        check("new save acknowledged and wakes delivery once",ack!=null && wakes==1 && STATUS.queued.isEmpty());
+        wakes=0; ack=enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE);
+        check("duplicate saved postable row retains first-send behavior",ack!=null && wakes==1 && DB.tables.get("commands").size()==1);
+        for(String state:new String[]{"uncertain","accepted","dispatching","received","running","saved"}) {
+            reset(); seed(state,false,false); String before=snapshot();
+            ack=enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE);
+            check(state+" status returns durable ack before network",ack!=null && gets==0 && STATUS.queued.size()==1 && snapshot().equals(before));
+            noDelivery(state+" queued"); STATUS.runAll();
+            check(state+" targeted receipt commits terminal proof",gets==1 && intent().state.equals("completed") && intent().revision==1 && intent().binding!=null && !intent().mayPost);
+            noDelivery(state+" finished");
+            HttpURLConnection c=connections.get(0);
+            check(state+" exact raw scope encoded with exact ID",c.url.equals(ORIGIN+"/api/receipts/"+URLEncoder.encode(ID,"UTF-8")+"?session="+URLEncoder.encode(RAW,"UTF-8")));
+            check(state+" HTTP caches disabled and bounded",!c.useCaches && "no-store".equals(c.headers.get("Cache-Control")) && !c.redirects && c.connectTimeout>0 && c.connectTimeout<=15000 && c.readTimeout>0 && c.readTimeout<=20000 && c.disconnected);
+        }
+        for(String state:new String[]{"completed","forwarded","failed"}) {
+            reset(); seed(state,false,false); ack=enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE);
+            check(state+" duplicate immediate ack without queued work",ack!=null && STATUS.queued.isEmpty() && gets==0); noDelivery(state+" terminal");
+        }
+        for(String retained:new String[]{"receipt","receipt_binding"}) {
+            reset(); seed("saved",true,false);
+            row().put(retained,retained.equals("receipt") ? envelope("running").optJSONObject("receipt").toString() : witness(CANONICAL).toString());
+            String before=snapshot(); status=404;
+            ack=enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE);
+            check("migrated saved old flags with "+retained+" immediately acknowledges target-only route",ack!=null && intent().mayPost && !intent().legacy && intent().state.equals("saved") && STATUS.queued.size()==1 && gets==0 && snapshot().equals(before));
+            noDelivery("migrated "+retained+" queued"); STATUS.runAll();
+            check("migrated saved old flags with "+retained+" GET 404 preserves entire row",gets==1 && snapshot().equals(before) && STATUS_KEYS.isEmpty());
+            noDelivery("migrated "+retained+" checked");
+        }
+        reset(); seed("saved",true,true); enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE);
+        check("legacy duplicate cannot inherit posting route",STATUS.queued.size()==1); noDelivery("legacy duplicate");
+        reset(); JSONObject imported=command(ID).put("state","uncertain").put("receiptBinding",JSONObject.NULL);
+        ack=enqueue(CONTEXT,namespace,ORIGIN,imported,true,Long.MAX_VALUE);
+        check("new reconcile-only import uses status and SQL absent binding",ack!=null && intent().legacy && !intent().mayPost && intent().binding==null && STATUS.queued.size()==1); noDelivery("import");
+        reset(); seed("uncertain",false,false); response=envelope("running"); enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+        check("target nonterminal proof persists without scheduling",intent().state.equals("running") && gets==1); noDelivery("nonterminal target");
+        for(int code:new int[]{404,400,401,403,409,500}) {
+            reset(); seed("uncertain",false,false); row().put("receipt",envelope("running").optJSONObject("receipt").toString()); row().put("receipt_binding",witness(CANONICAL).toString()); String before=snapshot();
+            status=code; enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+            check("target HTTP "+code+" preserves entire durable row",snapshot().equals(before) && gets==1 && STATUS_KEYS.isEmpty()); noDelivery("HTTP "+code);
+        }
+        reset(); seed("uncertain",false,false); String before=snapshot(); failTransport=true;
+        enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+        check("target transport error retains durable ack/evidence",snapshot().equals(before) && STATUS_KEYS.isEmpty()); noDelivery("transport error");
+        for(Object malformed:new Object[]{JSONObject.NULL,"bad",new JSONObject().put("version",2)}) {
+            reset(); seed("uncertain",false,false); before=snapshot(); response=envelope("completed").put("receiptBinding",malformed);
+            enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll(); check("target malformed binding preserves row: "+malformed,snapshot().equals(before)); noDelivery("malformed target");
+        }
+    }
+
+    private static void reservations() throws Exception {
+        reset(); seed("uncertain",false,false);
+        for(int i=0;i<200;i++) enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE);
+        check("same scoped ID coalesces 200 clicks into one queued check",STATUS.queued.size()==1 && STATUS_KEYS.size()==1 && gets==0);
+        STATUS.runAll(); check("successful check releases reservation",STATUS_KEYS.isEmpty()); noDelivery("coalescing");
+        reset();
+        for(int i=0;i<51;i++) {
+            Map<String,Object> synthetic=new LinkedHashMap<>(); for(String column:COMMAND_COLUMNS) synthetic.put(column,null);
+            synthetic.put("namespace",namespace); synthetic.put("origin",ORIGIN); synthetic.put("command_id","id-"+i); synthetic.put("session_path",RAW); synthetic.put("payload_hash","same"); synthetic.put("state","uncertain"); synthetic.put("receipt_revision",0L); synthetic.put("legacy",0); synthetic.put("may_post",0);
+            StoredIntent captured=new StoredIntent(cursor(synthetic)); requestStatus(CONTEXT,captured);
+        }
+        check("status reservations cap running plus queued keys at 50",STATUS_KEYS.size()==50 && STATUS.queued.size()==50);
+        STATUS.runAll(); check("missing-row tasks all release reservations without HTTP",STATUS_KEYS.isEmpty() && gets==0); noDelivery("capacity");
+        reset(); seed("uncertain",false,false); STATUS.reject=true; JSONObject ack=enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE);
+        check("executor rejection preserves ack and cleans reservation",ack!=null && STATUS_KEYS.isEmpty() && STATUS.queued.isEmpty());
+        STATUS.reject=false; status=404; enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+        check("rejected key can later retry and 404 releases reservation",gets==1 && STATUS_KEYS.isEmpty()); noDelivery("rejected executor");
+        reset(); seed("uncertain",false,false); enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); token="changed"; STATUS.runAll();
+        check("token change before execution blocks I/O and cleans key",gets==0 && STATUS_KEYS.isEmpty()); noDelivery("stale token");
+        reset(); seed("uncertain",false,false); enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); endpoint="https://other.invalid"; STATUS.runAll();
+        check("origin change before execution blocks I/O",gets==0 && STATUS_KEYS.isEmpty()); noDelivery("stale origin");
+        reset(); seed("uncertain",false,false); StoredIntent expected=intent(); row().put("receipt_revision",1L); requestStatus(CONTEXT,expected); STATUS.runAll();
+        check("changed revision before execution prevents stale network work",gets==0 && STATUS_KEYS.isEmpty()); noDelivery("stale revision");
+    }
+    private static Cursor cursor(Map<String,Object> values) { Cursor cursor=new Cursor(Arrays.asList(values),null); cursor.moveToFirst(); return cursor; }
+
+    private static void transactionalEvidence() throws Exception {
+        reset(); seed("uncertain",false,false); StoredIntent original=intent();
+        NativeReceiptValidator.Evidence accepted=applyReceipt(CONTEXT,TOKEN,ORIGIN,original,envelope("running"));
+        check("receipt binding state authority revision commit together",accepted!=null && intent().state.equals("running") && intent().binding!=null && !intent().mayPost && intent().revision==1);
+        String newer=snapshot(); check("stale delivery receipt cannot replace target result",applyReceipt(CONTEXT,TOKEN,ORIGIN,original,envelope("completed"))==null && snapshot().equals(newer));
+        check("delayed timeout cannot erase newer receipt",!markIfCurrent(CONTEXT,TOKEN,ORIGIN,original,"uncertain","timeout") && snapshot().equals(newer));
+        StoredIntent running=intent(); check("same-millisecond terminal settlement accepted",applyReceipt(CONTEXT,TOKEN,ORIGIN,running,envelope("completed"))!=null && intent().state.equals("completed"));
+        newer=snapshot(); check("terminal evidence ignores current-revision nonterminal",applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope("running"))==null && snapshot().equals(newer));
+        check("terminal evidence ignores delayed local error",!markIfCurrent(CONTEXT,TOKEN,ORIGIN,intent(),"failed","late") && snapshot().equals(newer));
+        check("conflicting terminal observation preserves existing terminal",applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope("failed"))==null && snapshot().equals(newer));
+        reset(); seed("uncertain",false,false); applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope(ID,CANONICAL,"running",200,500,true));
+        check("clock rollback terminal settles current revision",applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope(ID,CANONICAL,"completed",200,100,true))!=null && intent().state.equals("completed"));
+        reset(); seed("uncertain",false,false); original=intent(); DB.tables.get("commands").clear();
+        check("removed row is never recreated by late response",applyReceipt(CONTEXT,TOKEN,ORIGIN,original,envelope("completed"))==null && DB.tables.get("commands").isEmpty());
+        check("removed row ignores delayed local error",!markIfCurrent(CONTEXT,TOKEN,ORIGIN,original,"uncertain","late"));
+        for(String field:new String[]{"namespace","origin","command_id","session_path","payload_hash"}) {
+            reset(); seed("uncertain",false,false); StoredIntent captured=intent(); row().put(field,"changed"); String before=snapshot();
+            check("captured identity fences changed "+field,applyReceipt(CONTEXT,TOKEN,ORIGIN,captured,envelope("completed"))==null && snapshot().equals(before));
+        }
+        reset(); seed("uncertain",false,false); StoredIntent captured=intent(); final StoredIntent tokenCaptured=captured; String before=snapshot(); token="changed";
+        rejects("token change rejects transaction",()->applyReceipt(CONTEXT,TOKEN,ORIGIN,tokenCaptured,envelope("completed"))); check("token rejection preserves row",snapshot().equals(before));
+        reset(); seed("uncertain",false,false); captured=intent(); StoredIntent target=captured; before=snapshot();
+        onResponse=()->token="changed"; enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+        check("scope changes during HTTP preserve evidence",snapshot().equals(before)); noDelivery("HTTP scope race");
+        reset(); seed("uncertain",false,false); original=intent(); applyReceipt(CONTEXT,TOKEN,ORIGIN,original,envelope("running")); before=snapshot();
+        check("stale first-witness race discarded before retarget",applyReceipt(CONTEXT,TOKEN,ORIGIN,original,envelope(ID,OTHER,"completed",100,100,true))==null && snapshot().equals(before));
+        rejects("latest retained witness rejects canonical retarget",()->applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope(ID,OTHER,"completed",100,100,true)));
+        check("canonical rejection retains complete row",snapshot().equals(before));
+        rejects("bound row rejects downgrade",()->applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope(ID,RAW,"completed",100,100,false)));
+        check("downgrade rejection retains complete row",snapshot().equals(before));
+        for(String malformed:new String[]{"null","\"bad\"","{}","{broken","{} trailing"}) {
+            reset(); seed("uncertain",false,false); row().put("receipt_binding",malformed); String prior=snapshot();
+            rejects("malformed saved witness fails closed: "+malformed,()->applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope("completed")));
+            check("malformed retained witness preserved",snapshot().equals(prior));
+        }
+        reset(); seed("uncertain",false,false); row().put("receipt",envelope(ID,RAW,"running",10,20,false).optJSONObject("receipt").toString());
+        check("legacy unbound row acquires first independently bound proof",applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope("completed"))!=null && intent().binding!=null);
+        reset(); seed("uncertain",false,false); check("legacy exact unbound receipt remains compatible",applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope(ID,RAW,"completed",5,4,false))!=null && intent().binding==null);
+        reset(); seed("uncertain",false,false); before=snapshot(); beforeUpdate=()->row().put("receipt_revision",999L);
+        check("SQL CAS checks revision at update boundary",applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope("completed"))==null);
+        check("failed synthetic transaction rolls back atomic batch",snapshot().equals(before));
+        reset(); seed("uncertain",false,false); enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE);
+        onResponse=()->{ try { applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope("running")); } catch(Exception error) { throw new AssertionError(error); } }; STATUS.runAll();
+        check("target response loses safely to newer concurrent delivery receipt",intent().state.equals("running") && intent().revision==1); noDelivery("overlap");
+    }
+
+    private static void authorityAndDelivery() throws Exception {
+        reset(); seed("saved",true,false); StoredIntent initial=intent(); StoredIntent claimed=claimForPost(CONTEXT,TOKEN,ORIGIN,initial);
+        check("claim atomically disables posting and advances revision",claimed!=null && claimed.state.equals("dispatching") && !claimed.mayPost && claimed.revision==1);
+        check("duplicate stale claim cannot post",claimForPost(CONTEXT,TOKEN,ORIGIN,initial)==null);
+        check("claim cannot reclaim already claimed authority",claimForPost(CONTEXT,TOKEN,ORIGIN,intent())==null);
+        check("old status revision cannot overwrite claim",applyReceipt(CONTEXT,TOKEN,ORIGIN,initial,envelope("running"))==null);
+        check("captured post timeout can mark current claim uncertain",markIfCurrent(CONTEXT,TOKEN,ORIGIN,claimed,"uncertain","timeout") && intent().revision==2 && !intent().mayPost);
+        reset(); seed("uncertain",false,false); check("existing delivery-only empty-evidence 404 rearm policy retained",rearmForVerified404(CONTEXT,TOKEN,ORIGIN,intent())!=null && intent().mayPost);
+        for(String blocker:new String[]{"legacy","receipt","binding","terminal","stale"}) {
+            reset(); seed("uncertain",false,false); StoredIntent expected=intent();
+            switch(blocker) {
+                case "legacy": row().put("legacy",1); break;
+                case "receipt": row().put("receipt",envelope("running").optJSONObject("receipt").toString()); break;
+                case "binding": row().put("receipt_binding","{}"); break;
+                case "terminal": row().put("state","completed"); break;
+                case "stale": row().put("receipt_revision",1L); break;
+                default: throw new AssertionError(blocker);
+            }
+            String before=snapshot(); check("rearm blocked by "+blocker,rearmForVerified404(CONTEXT,TOKEN,ORIGIN,expected)==null && snapshot().equals(before));
+        }
+        reset(); seed("saved",true,false); applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope("completed"));
+        check("terminal row cannot claim even after current capture",claimForPost(CONTEXT,TOKEN,ORIGIN,intent())==null);
+        reset(); seed("uncertain",false,false); response=envelope("running"); deliver(CONTEXT,TOKEN,ORIGIN,namespace,get(CONTEXT,namespace,ORIGIN,ID));
+        check("delivery nonterminal success owns retry scheduling",gets==1 && jobs==1 && intent().state.equals("running") && posts==0);
+        reset(); seed("saved",true,false); status=404; deliver(CONTEXT,TOKEN,ORIGIN,namespace,get(CONTEXT,namespace,ORIGIN,ID));
+        check("new delivery accepts bound alias POST after one claim",gets==1 && posts==1 && claims==1 && intent().state.equals("completed") && intent().revision==2 && intent().binding!=null);
+        reset(); seed("uncertain",false,false); row().put("notification_reply",1); failNotification=true;
+        deliver(CONTEXT,TOKEN,ORIGIN,namespace,get(CONTEXT,namespace,ORIGIN,ID));
+        check("notification exception cannot undo committed terminal evidence",intent().state.equals("completed") && intent().revision==1 && notifications==1);
+        reset(); seed("saved",true,false); status=404; postResponse=null;
+        rejects("lost POST response is not false terminal success",()->deliver(CONTEXT,TOKEN,ORIGIN,namespace,get(CONTEXT,namespace,ORIGIN,ID)));
+        check("lost POST response remains uncertain without repeat POST",posts==1 && intent().state.equals("uncertain") && !intent().mayPost);
+        reset(); HttpSession http=new HttpSession(TOKEN); SystemClock.now=HTTP_DEADLINE_MS;
+        rejects("actual HTTP deadline rejects expired request before connection",()->lookupReceipt(http,ORIGIN,TOKEN,ID,RAW)); check("expired HTTP opens no connection",gets==0); http.close();
+    }
+
+    private static Runnable commitRunning() {
+        return () -> { try { applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope("running")); } catch(Exception error) { throw new AssertionError(error); } };
+    }
+    private static void revisedDeliveryRaces() throws Exception {
+        for(String race:new String[]{"receipt","claim","rearm"}) {
+            reset(); seed(race.equals("claim") ? "saved" : "uncertain",race.equals("claim"),false);
+            if(race.equals("receipt")) onResponse=commitRunning();
+            if(race.equals("claim")) { status=404; beforeClaim=commitRunning(); }
+            if(race.equals("rearm")) { status=404; beforeRearm=commitRunning(); }
+            deliver(CONTEXT,TOKEN,ORIGIN,namespace,get(CONTEXT,namespace,ORIGIN,ID));
+            check("delivery "+race+" CAS loser retains target running receipt",intent().state.equals("running") && intent().revision==1 && intent().binding!=null && posts==0);
+            check("delivery "+race+" CAS loser schedules its own pending retry",jobs==1 && wakes==0);
+        }
+        for(String outcome:new String[]{"removed","terminal","scope","identity"}) {
+            reset(); seed("uncertain",false,false); StoredIntent expected=intent();
+            if(outcome.equals("removed")) DB.tables.get("commands").clear();
+            if(outcome.equals("terminal")) row().put("state","completed");
+            if(outcome.equals("scope")) token="changed";
+            if(outcome.equals("identity")) row().put("payload_hash","changed");
+            scheduleDeliveryRetryIfPending(CONTEXT,TOKEN,ORIGIN,expected);
+            check("CAS-loser retry does not schedule "+outcome+" work",jobs==0);
+        }
+        reset(); seed("uncertain",false,false); final StoredIntent pending=intent(); DB.failQuery=true;
+        rejects("delivery retry read failures escape for drain retry handling",()->scheduleDeliveryRetryIfPending(CONTEXT,TOKEN,ORIGIN,pending));
+        check("failed retry read cannot invent successful scheduling",jobs==0);
+        reset(); seed("running",false,false); row().put("created_at",System.currentTimeMillis()-FOLLOW_UP_GIVE_UP_MS);
+        scheduleDeliveryRetryIfPending(CONTEXT,TOKEN,ORIGIN,intent());
+        check("handed-off work past the receipt watch stops polling and is left uncertain",jobs==0 && intent().state.equals("uncertain") && !intent().mayPost && posts==0);
+        reset(); seed("saved",true,false); row().put("created_at",System.currentTimeMillis()-FOLLOW_UP_GIVE_UP_MS);
+        scheduleDeliveryRetryIfPending(CONTEXT,TOKEN,ORIGIN,intent());
+        check("unsent work keeps its capped retry however old",jobs==1 && intent().state.equals("saved") && intent().mayPost);
+        check("follow-up interval starts at its floor and backs off to the cap",followUpDelay(System.currentTimeMillis(),30_000)==30_000 && followUpDelay(0,30_000)==FOLLOW_UP_CAP_MS);
+        for(String field:new String[]{"receipt","receipt_binding"}) {
+            reset(); seed("saved",true,false);
+            row().put(field,field.equals("receipt") ? envelope("running").optJSONObject("receipt").toString() : witness(CANONICAL).toString());
+            String before=snapshot(); check("claim rejects legacy postable flag carrying "+field,claimForPost(CONTEXT,TOKEN,ORIGIN,intent())==null && snapshot().equals(before));
+            status=404; deliver(CONTEXT,TOKEN,ORIGIN,namespace,get(CONTEXT,namespace,ORIGIN,ID));
+            check("delivery 404 with "+field+" preserves evidence and never replays",intent().state.equals("uncertain") && !intent().mayPost && row().get(field)!=null && posts==0 && rearms==0 && jobs==1);
+        }
+        reset(); seed("saved",true,false); check("conditional local error revokes old posting flag",markIfCurrent(CONTEXT,TOKEN,ORIGIN,intent(),"uncertain","test") && !intent().mayPost);
+        for(Object malformed:new Object[]{"false","true",7,JSONObject.NULL}) {
+            reset(); seed("saved",true,false); status=404; postResponse=envelope("completed").put("ok",malformed);
+            rejects("POST malformed ok reaches strict evidence validation: "+malformed,()->deliver(CONTEXT,TOKEN,ORIGIN,namespace,get(CONTEXT,namespace,ORIGIN,ID)));
+            check("malformed POST ok remains uncertain, never fabricated failed",intent().state.equals("uncertain") && !intent().mayPost && posts==1 && intent().receipt==null);
+        }
+        reset(); seed("saved",true,false); status=404; postResponse=new JSONObject().put("ok",false).put("error","explicit refusal");
+        deliver(CONTEXT,TOKEN,ORIGIN,namespace,get(CONTEXT,namespace,ORIGIN,ID));
+        check("literal boolean POST refusal preserves explicit failed policy",intent().state.equals("failed") && !intent().mayPost && posts==1);
+        for(String field:new String[]{"receipt","receiptBinding"}) {
+            reset(); JSONObject imported=command(ID).put("state","saved").put(field,field.equals("receipt") ? envelope("running").optJSONObject("receipt") : witness(CANONICAL));
+            enqueue(CONTEXT,namespace,ORIGIN,imported,false,Long.MAX_VALUE);
+            check("saved import carrying "+field+" retains no-replay flags",intent().legacy && !intent().mayPost && STATUS.queued.size()==1); noDelivery("evidence-bearing saved import");
+        }
+        reset(); seed("uncertain",false,false); String before=snapshot(); onResponse=()->SystemClock.now=HTTP_DEADLINE_MS;
+        enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+        check("deadline during target response leaves entire row unchanged",snapshot().equals(before) && STATUS_KEYS.isEmpty() && closed==1); noDelivery("target deadline");
+        reset(); seed("uncertain",false,false); before=snapshot(); response=envelope("completed").put("padding","x".repeat(MAX_RESPONSE_BYTES));
+        enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+        check("oversized target response leaves entire row unchanged",snapshot().equals(before) && STATUS_KEYS.isEmpty() && closed==1); noDelivery("target body bound");
+    }
+
+    private static void terminalNotifications() throws Exception {
+        for(String terminal:new String[]{"completed","forwarded","failed"}) {
+            reset(); seed("uncertain",false,false); row().put("notification_reply",1); response=envelope(terminal);
+            enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+            check("target winning "+terminal+" apply issues one local notification",notifications==1 && intent().state.equals(terminal) && intent().revision==1); noDelivery("target terminal notification");
+            enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+            check("terminal reread cannot duplicate "+terminal+" notification",notifications==1 && gets==1);
+        }
+        reset(); seed("uncertain",false,false); row().put("notification_reply",1); failNotification=true;
+        enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+        check("target notification failure cannot regress committed terminal proof",notifications==1 && intent().state.equals("completed") && intent().revision==1 && STATUS_KEYS.isEmpty()); noDelivery("target notification failure");
+        reset(); seed("uncertain",false,false); row().put("notification_reply",1); response=envelope("running");
+        enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+        check("target nonterminal winner cannot issue terminal notification",notifications==0 && intent().state.equals("running")); noDelivery("target running notification");
+        reset(); seed("uncertain",false,false); row().put("notification_reply",1);
+        onResponse=()->{ try {
+            StoredIntent basis=intent();
+            NativeReceiptValidator.Evidence won=applyReceipt(CONTEXT,TOKEN,ORIGIN,basis,envelope("completed"));
+            afterDeliveryReceipt(CONTEXT,TOKEN,ORIGIN,basis,won.receipt);
+        } catch(Exception error) { throw new AssertionError(error); } };
+        enqueue(CONTEXT,namespace,ORIGIN,command(ID),false,Long.MAX_VALUE); STATUS.runAll();
+        check("target CAS loser cannot duplicate delivery winner notification",notifications==1 && intent().state.equals("completed") && intent().revision==1); noDelivery("terminal notification race");
+    }
+
+    private static void insertAndRemoval() throws Exception {
+        reset(); failStaging=true;
+        rejects("staging failure releases attachment ownership",()->insert(CONTEXT,ORIGIN,namespace,command(ID),false,false,Long.MAX_VALUE));
+        check("ownership released after staging failure",!NativeAttachmentRecovery.OWNERSHIP.isLocked());
+        reset(); expectCleanupOwnership=true;
+        rejects("failed insertion cleans staged files while owned",()->insert(CONTEXT,ORIGIN,namespace,command(ID).put("state","invalid"),false,false,Long.MAX_VALUE));
+        check("ownership released after transaction rollback and cleanup",!NativeAttachmentRecovery.OWNERSHIP.isLocked());
+        reset(); InsertResult fresh=insert(CONTEXT,ORIGIN,namespace,command(ID),false,false,Long.MAX_VALUE);
+        check("ownership released after successful commit",!NativeAttachmentRecovery.OWNERSHIP.isLocked());
+        InsertResult duplicate=insert(CONTEXT,ORIGIN,namespace,command(ID),false,false,Long.MAX_VALUE);
+        check("durable insertion outcome distinguishes new and existing",fresh.inserted && !duplicate.inserted && duplicate.command!=null && DB.tables.get("commands").size()==1);
+        rejects("duplicate ID payload collision preserved",()->insert(CONTEXT,ORIGIN,namespace,command(ID).put("text","different"),false,false,Long.MAX_VALUE));
+        reset(); Map<String,Object>[] racedHolder=mapHolder();
+        seed("uncertain",false,false); racedHolder[0]=new LinkedHashMap<>(row()); DB.tables.get("commands").clear();
+        onBegin=()->DB.tables.get("commands").add(new LinkedHashMap<>(racedHolder[0]));
+        InsertResult raced=insert(CONTEXT,ORIGIN,namespace,command(ID),false,false,Long.MAX_VALUE);
+        check("concurrent insertion discovered inside transaction is existing",!raced.inserted && raced.command!=null && DB.tables.get("commands").size()==1);
+        routeSavedCommand(CONTEXT,namespace,ORIGIN,raced,false); check("raced handed-off duplicate routes only status",STATUS.queued.size()==1); noDelivery("raced insertion");
+        reset(); JSONObject imported=command(ID).put("state","uncertain").put("receipt",envelope("running").optJSONObject("receipt")).put("receiptBinding",witness(CANONICAL));
+        InsertResult bound=insert(CONTEXT,ORIGIN,namespace,imported,true,true,Long.MAX_VALUE);
+        check("binding persists through public snapshot roundtrip",bound.command.optJSONObject("receiptBinding")!=null && bound.command.optJSONObject("receiptBinding").getString("canonicalSessionPath").equals(CANONICAL));
+        for(Object malformed:new Object[]{"bad",7,new JSONArray().put("bad"),new JSONObject().put("version",2)}) {
+            reset(); insert(CONTEXT,ORIGIN,namespace,command(ID).put("receiptBinding",malformed),true,true,Long.MAX_VALUE);
+            check("non-null malformed imported witness not discarded",intent().binding!=null && get(CONTEXT,namespace,ORIGIN,ID).has("receiptBinding"));
+            rejects("malformed imported proof blocks application",()->applyReceipt(CONTEXT,TOKEN,ORIGIN,intent(),envelope("completed")));
+        }
+        reset(); seed("uncertain",false,false); StoredIntent expected=intent(); remove(CONTEXT,namespace,ORIGIN,ID,null,Long.MAX_VALUE);
+        check("remove writes tombstone and blocks late receipt",intent()==null && DB.tables.get("tombstones").size()==1 && applyReceipt(CONTEXT,TOKEN,ORIGIN,expected,envelope("completed"))==null);
+        InsertResult removed=insert(CONTEXT,ORIGIN,namespace,command(ID),false,false,Long.MAX_VALUE); check("removed command cannot be recreated by duplicate enqueue",removed.command==null && !removed.inserted);
+        reset(); seed("dispatching",false,false); String before=snapshot(); rejects("dispatching attachment protection blocks remove",()->remove(CONTEXT,namespace,ORIGIN,ID,null,Long.MAX_VALUE)); check("blocked remove preserves data",snapshot().equals(before));
+        rejects("dispatching attachment protection blocks clear",()->clear(CONTEXT,namespace,ORIGIN,RAW,Long.MAX_VALUE)); check("blocked clear preserves data",snapshot().equals(before));
+        reset(); seed("uncertain",false,false); expected=intent(); clear(CONTEXT,namespace,ORIGIN,RAW,Long.MAX_VALUE);
+        check("clear keeps tombstone and marker and blocks late receipt",intent()==null && DB.tables.get("tombstones").size()==1 && DB.tables.get("clear_markers").size()==1 && applyReceipt(CONTEXT,TOKEN,ORIGIN,expected,envelope("completed"))==null);
+        check("clear marker blocks old imported different ID",insert(CONTEXT,ORIGIN,namespace,command("old-import").put("createdAt",1),true,true,Long.MAX_VALUE).command==null);
+        reset(); for(int i=0;i<50;i++) insert(CONTEXT,ORIGIN,namespace,command("count-"+i),false,false,Long.MAX_VALUE);
+        rejects("existing 50-command queue cap unchanged",()->insert(CONTEXT,ORIGIN,namespace,command("count-50"),false,false,Long.MAX_VALUE));
+        reset(); seed("uncertain",false,false); row().put("payload_bytes",MAX_BYTES);
+        rejects("existing aggregate 32 MiB cap unchanged",()->insert(CONTEXT,ORIGIN,namespace,command("extra"),false,false,Long.MAX_VALUE));
+    }
+    @SuppressWarnings("unchecked") private static Map<String,Object>[] mapHolder() { return (Map<String,Object>[])new Map<?,?>[1]; }
+    private static JSONObject photoCommand() {
+        return command(ID).put("images",new JSONArray().put(new JSONObject().put("mimeType","image/png").put("data","AQID")));
+    }
+    private static void draftEditCustody() throws Exception {
+        {
+            reset();
+            String token="browser-edit-reservation";
+            JSONObject imported=photoCommand().put("state","saved").put("createdAt",100L)
+                    .put("updatedAt",101L).put("editToken",token);
+            JSONObject request=new JSONObject().put("op","import").put("command",imported);
+            JSONObject ack=(JSONObject)execute(CONTEXT,ORIGIN,namespace,request,Long.MAX_VALUE);
+            check("bridge reserved import retains exact token and disables posting",
+                    token.equals(ack.getString("editToken")) && !intent().mayPost && !intent().legacy);
+            check("list and get expose imported reservation",
+                    token.equals(list(CONTEXT,namespace,ORIGIN,null).getJSONObject(0).getString("editToken"))
+                    && token.equals(get(CONTEXT,namespace,ORIGIN,ID).getString("editToken")));
+            JSONObject repeated=(JSONObject)execute(CONTEXT,ORIGIN,namespace,request,Long.MAX_VALUE);
+            check("reserved import retry coalesces without losing reservation or photos",
+                    token.equals(repeated.getString("editToken")) && DB.tables.get("commands").size()==1
+                    && images(CONTEXT,namespace,ORIGIN,ID).getJSONObject(0).getString("data").equals("AQID"));
+            JSONObject recovered=(JSONObject)execute(CONTEXT,ORIGIN,namespace,
+                    new JSONObject().put("op","edit_begin").put("commandId",ID).put("expected",ack),Long.MAX_VALUE);
+            check("bridge edit begin reuses imported token and exact photo bytes",
+                    token.equals(recovered.getString("editToken"))
+                    && recovered.getJSONArray("images").getJSONObject(0).getString("data").equals("AQID"));
+            STATUS.runAll(); deliver(CONTEXT,TOKEN,ORIGIN,namespace,get(CONTEXT,namespace,ORIGIN,ID));
+            check("reserved browser import cannot wake or perform HTTP",
+                    wakes==0 && posts==0 && gets==0 && versions==0 && STATUS.queued.isEmpty());
+            rejects("same-session fresh bridge send refuses pending Edit",()->execute(CONTEXT,ORIGIN,namespace,
+                    new JSONObject().put("op","enqueue").put("command",command("replacement")),Long.MAX_VALUE));
+            check("blocked fresh send preserves source and creates no staged files",
+                    DB.tables.get("commands").size()==1 && imageFiles.size()==1 && wakes==0);
+            execute(CONTEXT,ORIGIN,namespace,new JSONObject().put("op","enqueue")
+                    .put("command",command("unrelated").put("sessionPath",OTHER)),Long.MAX_VALUE);
+            check("pending Edit permits unrelated session sends",wakes==1 && DB.tables.get("commands").size()==2);
+            JSONObject finished=(JSONObject)execute(CONTEXT,ORIGIN,namespace,new JSONObject()
+                    .put("op","edit_finish").put("commandId",ID).put("editToken",token).put("commit",true),Long.MAX_VALUE);
+            check("explicit bridge finish consumes reservation and photo custody",
+                    finished.getBoolean("finished") && intent()==null && imageFiles.isEmpty());
+            execute(CONTEXT,ORIGIN,namespace,new JSONObject().put("op","enqueue")
+                    .put("command",command("replacement")),Long.MAX_VALUE);
+            check("explicit finish releases same-session send fence",
+                    get(CONTEXT,namespace,ORIGIN,"replacement")!=null && wakes==2);
+            for(Object invalid:new Object[]{"",7,false}) {
+                reset(); JSONObject bad=photoCommand().put("state","saved").put("editToken",invalid);
+                rejects("bridge rejects invalid imported token "+invalid,()->execute(CONTEXT,ORIGIN,namespace,
+                        new JSONObject().put("op","import").put("command",bad),Long.MAX_VALUE));
+                check("invalid token import leaves no native custody or wake",DB.tables.get("commands").isEmpty() && imageFiles.isEmpty() && wakes==0);
+            }
+            for(String state:new String[]{"queued","uncertain","dispatching","completed"}) {
+                reset(); JSONObject bad=photoCommand().put("state",state).put("editToken",token);
+                rejects("bridge rejects reserved "+state+" import",()->execute(CONTEXT,ORIGIN,namespace,
+                        new JSONObject().put("op","import").put("command",bad),Long.MAX_VALUE));
+            }
+            for(String field:new String[]{"receipt","receiptBinding"}) {
+                reset(); JSONObject bad=photoCommand().put("state","saved").put("editToken",token)
+                        .put(field,field.equals("receipt") ? envelope("running").optJSONObject("receipt") : witness(CANONICAL));
+                rejects("bridge rejects reservation with prior "+field,()->execute(CONTEXT,ORIGIN,namespace,
+                        new JSONObject().put("op","import").put("command",bad),Long.MAX_VALUE));
+                check("invalid reservation evidence preserves browser-only custody",
+                        DB.tables.get("commands").isEmpty() && imageFiles.isEmpty() && wakes==0);
+            }
+            reset(); execute(CONTEXT,ORIGIN,namespace,new JSONObject().put("op","import")
+                    .put("command",photoCommand().put("state","saved")),Long.MAX_VALUE);
+            check("ordinary bridge photo import retains first-send wake and bytes",
+                    wakes==1 && intent().mayPost && intent().editToken==null
+                    && images(CONTEXT,namespace,ORIGIN,ID).getJSONObject(0).getString("data").equals("AQID"));
+            rejects("reserved import cannot acknowledge conflicting existing custody",()->execute(CONTEXT,ORIGIN,namespace,request,Long.MAX_VALUE));
+        }
+        {
+            reset();
+            insert(CONTEXT,ORIGIN,namespace,command(ID).put("state","saved").put("editToken","racing-edit"),
+                    false,false,Long.MAX_VALUE);
+            Map<String,Object> reservedSource=new LinkedHashMap<>(row());
+            DB.tables.get("commands").clear();
+            onBegin=()->DB.tables.get("commands").add(new LinkedHashMap<>(reservedSource));
+            rejects("atomic insert catches reservation after preflight",()->enqueue(CONTEXT,namespace,ORIGIN,
+                    photoCommand().put("commandId","racing-replacement"),false,Long.MAX_VALUE));
+            check("raced reservation blocks replacement and cleans staged photo",
+                    DB.tables.get("commands").size()==1 && intent().editToken.equals("racing-edit")
+                    && imageFiles.isEmpty() && wakes==0);
+        }
+        {
+            reset(); insert(CONTEXT,ORIGIN,namespace,photoCommand(),false,false,Long.MAX_VALUE);
+            JSONObject expected=get(CONTEXT,namespace,ORIGIN,ID); StoredIntent before=intent();
+            requestStatus(CONTEXT,before);
+            JSONObject reserved=editBegin(CONTEXT,namespace,ORIGIN,ID,expected,Long.MAX_VALUE);
+            String editToken=reserved.getString("editToken");
+            check("photo edit recovers exact text and image bytes before removal",
+                    reserved.optJSONObject("entry").getString("text").equals(expected.getString("text"))
+                    && reserved.optJSONArray("images").getJSONObject(0).getString("data").equals("AQID")
+                    && images(CONTEXT,namespace,ORIGIN,ID).length()==1);
+            STATUS.runAll(); deliver(CONTEXT,TOKEN,ORIGIN,namespace,get(CONTEXT,namespace,ORIGIN,ID));
+            rejects("reserved duplicate cannot bypass session fence",
+                    ()->enqueue(CONTEXT,namespace,ORIGIN,photoCommand(),false,Long.MAX_VALUE));
+            check("reserved photo never dispatches or starts receipt work",posts==0 && gets==0 && versions==0 && wakes==0 && STATUS.queued.isEmpty());
+            check("edit wins against earlier claim and receipt owners",
+                    claimForPost(CONTEXT,TOKEN,ORIGIN,before)==null
+                    && applyReceipt(CONTEXT,TOKEN,ORIGIN,before,envelope("completed"))==null
+                    && !markIfCurrent(CONTEXT,TOKEN,ORIGIN,before,"failed","stale"));
+            JSONObject repeated=editBegin(CONTEXT,namespace,ORIGIN,ID,expected,Long.MAX_VALUE);
+            check("lost begin acknowledgement retains the same recoverable reservation",editToken.equals(repeated.getString("editToken")));
+            check("stale pre-edit discard cannot delete reserved photos",!remove(CONTEXT,namespace,ORIGIN,ID,expected,Long.MAX_VALUE)
+                    && images(CONTEXT,namespace,ORIGIN,ID).length()==1);
+            check("wrong edit completion cannot release custody",!editFinish(CONTEXT,namespace,ORIGIN,ID,"stale",true,Long.MAX_VALUE));
+            rejects("expired completion retains recovery",()->editFinish(CONTEXT,namespace,ORIGIN,ID,editToken,true,0));
+            check("durable draft commit retires original bytes and blocks duplicate replay",
+                    editFinish(CONTEXT,namespace,ORIGIN,ID,editToken,true,Long.MAX_VALUE)
+                    && get(CONTEXT,namespace,ORIGIN,ID)==null && imageFiles.isEmpty()
+                    && insert(CONTEXT,ORIGIN,namespace,photoCommand(),false,false,Long.MAX_VALUE).command==null);
+            check("lost finish acknowledgement is idempotent",editFinish(CONTEXT,namespace,ORIGIN,ID,editToken,true,Long.MAX_VALUE));
+        }
+        {
+            reset(); insert(CONTEXT,ORIGIN,namespace,photoCommand(),false,false,Long.MAX_VALUE);
+            JSONObject expected=get(CONTEXT,namespace,ORIGIN,ID);
+            claimForPost(CONTEXT,TOKEN,ORIGIN,intent()); String before=snapshot();
+            check("dispatch wins against edit without losing its photos",editBegin(CONTEXT,namespace,ORIGIN,ID,expected,Long.MAX_VALUE)==null && before.equals(snapshot()));
+        }
+        {
+            reset(); insert(CONTEXT,ORIGIN,namespace,photoCommand(),false,false,Long.MAX_VALUE);
+            JSONObject expected=get(CONTEXT,namespace,ORIGIN,ID);
+            String editToken=editBegin(CONTEXT,namespace,ORIGIN,ID,expected,Long.MAX_VALUE).getString("editToken");
+            editFinish(CONTEXT,namespace,ORIGIN,ID,editToken,false,Long.MAX_VALUE);
+            status=404; deliver(CONTEXT,TOKEN,ORIGIN,namespace,get(CONTEXT,namespace,ORIGIN,ID));
+            check("explicit rollback returns original photo to normal delivery",posts==1
+                    && connections.stream().anyMatch(connection -> connection.sent.toString(StandardCharsets.UTF_8).contains("AQID")));
+        }
+        {
+            reset(); insert(CONTEXT,ORIGIN,namespace,photoCommand(),false,false,Long.MAX_VALUE);
+            JSONObject expected=get(CONTEXT,namespace,ORIGIN,ID); String before=snapshot(); imageFiles.clear();
+            rejects("unreadable photo refuses edit before reservation commits",()->editBegin(CONTEXT,namespace,ORIGIN,ID,expected,Long.MAX_VALUE));
+            check("failed photo retrieval leaves original intent untouched",before.equals(snapshot()));
+            token="different-credential";
+            rejects("credential switch cannot acquire old photo intent",()->editBegin(CONTEXT,namespace,ORIGIN,ID,expected,Long.MAX_VALUE));
+        }
+        {
+            reset(); insert(CONTEXT,ORIGIN,namespace,photoCommand(),false,false,Long.MAX_VALUE);
+            JSONObject expected=get(CONTEXT,namespace,ORIGIN,ID).put("text","stale text"); String before=snapshot();
+            check("stale intent identity cannot take another payload",editBegin(CONTEXT,namespace,ORIGIN,ID,expected,Long.MAX_VALUE)==null && before.equals(snapshot()));
+            editBegin(CONTEXT,namespace,ORIGIN,ID,get(CONTEXT,namespace,ORIGIN,ID),Long.MAX_VALUE);
+            check("explicit current reserved discard retires recoverable bytes",remove(CONTEXT,namespace,ORIGIN,ID,get(CONTEXT,namespace,ORIGIN,ID),Long.MAX_VALUE) && imageFiles.isEmpty());
+        }
+    }
+    private static void migratedQueuesRemainEditable() throws Exception {
+        for(String[] absent:new String[][]{
+                {"receipt_binding","receipt_revision","delivery","edit_token"},
+                {"delivery","edit_token"}, {"receipt_binding","receipt_revision","edit_token"},
+                {"edit_token"}, {}}) {
+            reset(); insert(CONTEXT,ORIGIN,namespace,photoCommand(),false,false,Long.MAX_VALUE);
+            List<String> old=new ArrayList<>(COMMAND_COLUMNS); old.removeAll(Arrays.asList(absent));
+            DB.schema.put("commands",old);
+            Helper helper=new Helper(CONTEXT); helper.onUpgrade(DB,1,DATABASE_VERSION);
+            JSONObject restored=editBegin(CONTEXT,namespace,ORIGIN,ID,get(CONTEXT,namespace,ORIGIN,ID),Long.MAX_VALUE);
+            check("legacy queue upgrades without losing its editable photo "+Arrays.toString(absent),
+                    restored.optJSONArray("images").getJSONObject(0).getString("data").equals("AQID")
+                    && restored.optJSONObject("entry").getString("text").equals(command(ID).getString("text")));
+        }
+    }
+    public static void main(String[] args) throws Exception {
+        routingAndStatus(); reservations(); transactionalEvidence(); authorityAndDelivery(); revisedDeliveryRaces(); terminalNotifications(); insertAndRemoval(); draftEditCustody(); migratedQueuesRemainEditable();
+        System.out.println("SUMMARY "+assertions+" source-bound integration checks passed");
+        System.out.println("BOUNDARIES Java JSON/HTTP/persistence/executors/notification/attachment files are synthetic; Android SQLite, real transport, scheduling and device acceptance unrun");
+    }
+}

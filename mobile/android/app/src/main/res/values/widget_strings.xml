@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_description">Start a new chat and jump back into your latest ones.</string>
+    <string name="widget_new_chat">New chat</string>
+    <string name="widget_empty">No chats yet</string>
+    <string name="widget_pair">Open omp-pulse to pair</string>
+    <string name="widget_unreachable">Can\'t reach your computer</string>
+    <string name="widget_stale">Offline, updated %1$s ago</string>
+    <string name="widget_untitled">Untitled chat</string>
+    <string name="widget_state_running">Running</string>
+    <string name="widget_state_needs_input">Needs input</string>
+    <string name="widget_state_done">Done</string>
+</resources>

@@ -1,0 +1,71 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems do not belong here: see SECURITY.md and report them privately.
+        Please remove tokens, pairing links, collab links, hostnames and private conversation content from anything you paste.
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Desktop daemon, Android app
+        - Desktop daemon, web app in a browser
+        - Phone mode (omp running on the phone)
+    validations:
+      required: true
+  - type: input
+    id: daemon-version
+    attributes:
+      label: Daemon version
+      description: Output of `omp-pulse version` (desktop), or the version shown in the app's Settings (phone mode).
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: Android app version from Settings, or the browser name and version for the web app.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Computer OS and version, phone model and Android version, and the omp version (`omp --version`).
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: How the phone reaches the daemon
+      options:
+        - Tailscale Serve
+        - Cloudflare Tunnel
+        - Plain LAN
+        - Phone mode (loopback)
+        - Other
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostics
+      description: Output of `omp-pulse doctor`, and relevant daemon log lines (redacted).
+      render: text

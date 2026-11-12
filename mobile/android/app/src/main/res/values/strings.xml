@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">omp-pulse</string>
+    <string name="title_activity_main">omp-pulse</string>
+    <string name="shortcut_choose_run_on">Choose where to run</string>
+    <string name="package_name">com.omppulse.app</string>
+    <string name="custom_url_scheme">com.omppulse.app</string>
+    <string name="phone_accessibility_description">Lets the on-device omp agent read the screen and tap, type and swipe in other apps.</string>
+</resources>

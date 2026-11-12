@@ -1,0 +1,44 @@
+omp-pulse Android app: third-party notices
+
+omp-pulse is MIT-licensed. The full list of third-party software and its
+licences is THIRD_PARTY_NOTICES.md in the source repository. This APK
+redistributes the following unmodified third-party binaries, built by Termux
+(https://termux.dev). They run as separate programs and libraries and are not
+linked into omp-pulse.
+
+libproot.so, libproot-loader.so: PRoot 5.1.107.96 (Termux fork)
+  Copyright (C) 2015 STMicroelectronics and the PRoot contributors.
+  GNU General Public License version 2 or (at your option) any later version.
+  Licence text: GPL-2.0.txt
+  Source: https://github.com/termux/proot/archive/v5.1.107.96.zip
+    sha256 75f654fe60dea92dabff2bf083ae8bfe4f91baa6a1a374786a6bf391015eebaa
+    (also attached to every omp-pulse release that ships this APK as
+    proot-5.1.107.96-source.zip)
+  Build recipe: https://github.com/termux/termux-packages/blob/de39661946f7e8175b5dd0755121fa28cb0aebd1/packages/proot/build.sh
+
+libtalloc.so: talloc 2.5.0
+  Copyright (C) Andrew Tridgell 2004-2005, Stefan Metzmacher 2006, and the
+  Samba team.
+  GNU Lesser General Public License version 3 or (at your option) any later
+  version. Licence texts: LGPL-3.0.txt, GPL-3.0.txt
+  Source: https://www.samba.org/ftp/talloc/talloc-2.5.0.tar.gz
+    sha256 912afa237510ae542a7733998eb18a12bcda35ab6729c8e2ddb43e8d0ebab007
+  Build recipe: https://github.com/termux/termux-packages/blob/bddd9721910e56bc36412a764b4b4f7bbdbb1eb1/packages/libtalloc/build.sh
+  You may replace this library with a compatible build of your own.
+
+libandroid-shmem.so: libandroid-shmem 0.7
+  Copyright (c) 2013, Sergii Pylypenko; Copyright (c) 2017, Fredrik Fornwall.
+  BSD 3-Clause licence. Licence text: libandroid-shmem-BSD-3-Clause.txt
+  Source: https://github.com/termux/libandroid-shmem/archive/refs/tags/v0.7.tar.gz
+
+The bundled web interface uses the Geist and Geist Mono fonts (SIL Open Font
+License 1.1), Lucide icons (ISC), LobeHub icons (MIT), shadcn/ui (MIT) and AI
+Elements (Apache-2.0); see public/licenses/NOTICE.txt. The app is built on
+Capacitor (MIT, Copyright (c) 2017-present Drifty Co.; licence text:
+capacitor-MIT.txt) and on AndroidX, Apache Cordova and the Kotlin standard
+library (Apache License 2.0; licence text: Apache-2.0.txt).
+
+omp and Alpine Linux are not part of this APK: phone mode downloads them from
+their publishers on first run. omp is MIT-licensed by its authors
+(https://github.com/can1357/oh-my-pi); Alpine Linux packages carry their own
+licences (https://alpinelinux.org).

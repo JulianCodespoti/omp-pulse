@@ -1,0 +1,995 @@
+#!/usr/bin/env python3
+"""heavy: one machine-wide broker for heavy build/test jobs, for every project and agent.
+
+Why: agents are cheap (the model runs remotely), the phone is not (the app gets only
+some of its cores, memory is shared with Android, swap often full). On a reference
+phone eighteen subagents each ran full gates through one `flock`: a 4.7 s vite build
+waited 27 min, 19 jobs were killed by tool timeouts that counted their queue time,
+and 45 h of job time was squeezed into 13 h. This broker replaces ad-hoc locks:
+
+- Admission by measured resources, not one-at-a-time: a job starts when its
+  predicted peak memory fits in MemAvailable minus a reserve (and minus what
+  running jobs are still predicted to grow), and CPU slots are free (one per core
+  the app may use). Predictions are learned per command from sampled process-tree
+  RSS and duration; until then the class guess from the rules applies. The reserve
+  and class guesses in the rules were measured on a reference phone with ~11 GB
+  MemTotal and scale linearly with this phone's MemTotal (`heavy --help` prints them).
+- Fair and short-first: owners with fewer running jobs go first, then the shortest
+  predicted job; waiting ages a job up, and a job starved past 10 min only lets
+  short jobs (< 60 s) backfill ahead of it. One job always runs when idle.
+- The run-time limit (`--timeout`) starts at admission; queue time never counts.
+- Identical work runs once: a cacheable command (tests, checks, typecheck) with
+  the same command, cwd and working-tree fingerprint attaches to the job already
+  running, or replays a passing result from the last 6 h.
+- Nested calls pass straight through (HEAVY_JOB_ID), so wrapped scripts that call
+  cargo again cannot deadlock. Broker down = run directly (fail open).
+
+Callers: the omp extension `agent/extensions/heavy-jobs.ts` wraps matching bash
+tool calls; shims in `bin/shims` (linked into /usr/local/bin) catch cargo, node
+--test, npx and gradle started from scripts. Rules: `agent/heavy-jobs.json`.
+
+Usage:
+  heavy run [--owner O] [--timeout S] [--no-cache] -- CMD...   run CMD through the broker
+  heavy status [--json]                                       running and queued jobs
+  heavy history [-n N]                                        recent jobs, waits, peaks
+  heavy classify -- CMD...                                     which rule CMD matches
+  heavy serve                                                 the daemon (auto-started)
+Env: HEAVY=off bypasses; HEAVY_NO_CACHE=1 forces a rerun; HEAVY_STATE moves state.
+"""
+import argparse, asyncio, fcntl, hashlib, json, os, re, shlex, signal, socket, sqlite3, subprocess, sys, threading, time
+
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+CONFIG = os.environ.get("HEAVY_CONFIG") or os.path.join(REPO, "agent", "heavy-jobs.json")
+STATE = os.environ.get("HEAVY_STATE", "/root/.local/state/heavy")
+SOCK = os.path.join(STATE, "heavy.sock")
+DB = os.path.join(STATE, "heavy.db")
+LOGS = os.path.join(STATE, "jobs")
+LANE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "lane")
+LANE_STATE = os.environ.get("LANE_STATE", "/root/.local/state/omp-lane")
+NICE = 10            # below agents and the daemon, above mem-guard's nice 19 for runaways
+STARVE_S = 600       # a job waiting this long stops being overtaken by long jobs
+BACKFILL_S = 60      # ... but jobs predicted shorter than this may still start
+AGING = 2.0          # each second waited counts as this many seconds shorter
+KEEP_LOGS = 300
+TICK_S = 2.0
+DEFAULT_S = {"rust": 300, "jvm": 300, "native": 120, "node": 60, "node-test": 300, "browser": 300, "py-test": 60}
+REF_MEMTOTAL_MB = 11113   # MemTotal of the reference phone heavy-jobs.json's memory values were measured on
+DEFAULT_RESERVE_MB = 1200  # reserve_mb when the rules give none (reference phone)
+MIN_RESERVE_MB = 600       # scaled values never go below these (nor below the configured value)
+MIN_CLASS_MB = 200
+# Simple commands allowed in a cacheable line: anything else may have side effects
+# (push, deploy, rm) that a replayed result would silently skip.
+FILTERS = {"true", "echo", "printf", "tail", "head", "grep", "wc", "sort", "uniq", "cut", "tr", "export", "set"}
+PURE_HEADS = FILTERS | {"cargo", "npx", "node", "tsc", "npm", "pnpm", "yarn", "bun", "pytest", "python",
+                        "python3", "vitest", "jest"}
+WRAPPERS = {"env", "nice", "time", "timeout", "command", "flock"}  # run the command that follows their own arguments
+FP_ENV = ("RUSTFLAGS", "RUSTDOCFLAGS", "CARGO_BUILD_TARGET", "CARGO_PROFILE_DEV_DEBUG", "CARGO_INCREMENTAL",
+          "NODE_OPTIONS", "NODE_ENV", "PYTHONPATH", "VIRTUAL_ENV")
+ARTIFACT = re.compile(rb"(^|/)(__pycache__|node_modules|target|\.pytest_cache|\.tsbuildinfo)(/|$)|\.py[co]$")
+
+
+# ---------------------------------------------------------------- rules
+
+_config_cache = {}
+
+
+def load_json(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    hit = _config_cache.get(path)
+    if hit and hit[0] == st.st_mtime_ns:
+        return hit[1]
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = None
+    _config_cache[path] = (st.st_mtime_ns, data)
+    return data
+
+
+def memtotal_mb():
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return REF_MEMTOTAL_MB
+
+
+MEMTOTAL_MB = memtotal_mb()
+
+
+def scaled_mb(reference_mb, floor_mb, memtotal):
+    """REFERENCE_MB (measured at REF_MEMTOTAL_MB) scaled linearly to MEMTOTAL, rounded to 50 MB, >= FLOOR_MB."""
+    return max(floor_mb, int(round(reference_mb * memtotal / REF_MEMTOTAL_MB / 50.0)) * 50)
+
+
+def scale_config(cfg, memtotal):
+    """cfg with reserve_mb and every class mem_mb scaled from the reference phone to MEMTOTAL MB;
+    the reference phone gets the file's values exactly."""
+    reserve = cfg.get("reserve_mb", DEFAULT_RESERVE_MB)
+    classes = {}
+    for name, c in (cfg.get("classes") or {}).items():
+        mb = c.get("mem_mb") if isinstance(c, dict) else None
+        classes[name] = dict(c, mem_mb=scaled_mb(mb, min(mb, MIN_CLASS_MB), memtotal)) \
+            if isinstance(mb, (int, float)) and not isinstance(mb, bool) else c
+    return dict(cfg, reserve_mb=scaled_mb(reserve, min(reserve, MIN_RESERVE_MB), memtotal), classes=classes)
+
+
+_scaled = (None, None)
+
+
+def config():
+    global _scaled
+    raw = load_json(CONFIG) or {"classes": {}, "rules": [], "reserve_mb": DEFAULT_RESERVE_MB, "cache_ttl_s": 0}
+    if _scaled[0] is not raw:
+        _scaled = (raw, scale_config(raw, MEMTOTAL_MB))
+    return _scaled[1]
+
+
+def git_root(cwd):
+    d = os.path.abspath(cwd)
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+
+
+def rules_for(cwd):
+    cfg = config()
+    root = git_root(cwd) if cwd else None
+    local = load_json(os.path.join(root, ".omp", "heavy-jobs.json")) if root else None
+    return ((local or {}).get("rules") or []) + (cfg.get("rules") or [])
+
+
+def blank_quotes(text):
+    """text with heredoc bodies dropped and quoted strings emptied, so prose in commit
+    messages, PR bodies or notes ("make it faster", "pytest is flaky") is not a command."""
+    lines, out, i = text.split("\n"), [], 0
+    while i < len(lines):
+        out.append(lines[i])
+        delims = re.findall(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", lines[i])
+        i += 1
+        for delim in delims:
+            while i < len(lines) and lines[i].strip() != delim:
+                i += 1
+            i += 1
+    return re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", "''", "\n".join(out))
+
+
+def simple_commands(text):
+    """Simple commands of a shell line as word lists, VAR=value prefixes and wrappers (nice, timeout, ...) dropped."""
+    out = []
+    for seg in re.split(r"&&|\|\||[;|\n]", blank_quotes(text)):
+        words = seg.strip().lstrip("({ ").rstrip(")} ").split()
+        while words:
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+                words.pop(0)  # VAR=value prefix
+            elif os.path.basename(words[0]) in WRAPPERS:
+                lockfile = os.path.basename(words.pop(0)) == "flock"
+                while words and re.match(r"^(-\S*|\d+[smhd]?|[A-Za-z_][A-Za-z0-9_]*=.*)$", words[0]):
+                    words.pop(0)  # the wrapper's own options and values
+                if lockfile and words:
+                    words.pop(0)  # flock LOCKFILE command
+            else:
+                break
+        if words:
+            out.append(words)
+    return out
+
+
+def classify(text, cwd=None):
+    """The rule for a shell line, merged with its class resources; None if no simple command matches.
+
+    A rule matches at the start of a simple command after an optional directory prefix,
+    so `git commit -m "cargo test"` is not a build. Class none anywhere wins (dev
+    servers and watchers never finish); otherwise the hungriest match sets the
+    resources and the line is cacheable only if every match is."""
+    cfg = config()
+    classes = cfg.get("classes") or {}
+    rules = rules_for(cwd)
+    found = []
+    for words in simple_commands(text):
+        seg = " ".join(words)
+        for rule in rules:
+            try:
+                hit = re.match(r"(\S*/)?(?:" + rule["re"] + ")", seg)
+            except re.error:
+                continue
+            if hit:
+                cls = rule.get("class", "none")
+                found.append(dict({"id": rule.get("id", "?"), "class": cls, "cache": bool(rule.get("cache")),
+                                   "lane": bool(rule.get("lane"))}, **classes.get(cls, {})))
+                break
+    if not found:
+        return None
+    for r in found:
+        if r["class"] == "none":
+            return r
+    best = max(found, key=lambda r: r.get("mem_mb", 0))
+    return dict(best, cache=all(r["cache"] for r in found), lane=all(r["lane"] for r in found))
+
+
+def pure(text, cwd=None):
+    """True if replaying a cached result of `text` (run in cwd) cannot skip a side effect
+    and the fingerprint of cwd's repo covers everything it reads."""
+    if re.search(r"\$\(|`|<\(|>\(", text):
+        return False
+    stripped = re.sub(r"\d?>&\d|\d?>\s*/dev/null|&>\s*/dev/null", "", blank_quotes(text))
+    if ">" in stripped or "<" in stripped:
+        return False
+    root = git_root(cwd or os.getcwd())
+    here = os.path.abspath(cwd or os.getcwd())
+    for words in simple_commands(stripped):
+        head, rest = os.path.basename(words[0]), " ".join(words[1:])
+        if head == "cd":
+            here = os.path.abspath(os.path.join(here, os.path.expanduser(words[1] if len(words) > 1 else "~")))
+            if words[1:2] == ["''"] or not root or git_root(here) != root:
+                return False  # the run would read a tree the fingerprint does not cover
+            continue
+        if head in FILTERS:
+            continue  # only shapes the output it is given
+        if re.search(r"(^|\s)(--fix|--bless|-u|--update\S*|--manifest-path)(\s|=|$)", rest):
+            return False  # rewrites sources/snapshots, or builds another tree
+        for w in words[1:]:
+            if w == "''" or (w.startswith(("/", "..", "~")) and not w.startswith("/dev/")
+                             and (not root or git_root(os.path.join(here, os.path.expanduser(w))) != root)):
+                return False  # reads outside the fingerprinted repo, or a quoted path we cannot see
+        if head not in PURE_HEADS:
+            return False
+        if head in ("python", "python3") and not re.match(r"-m\s+(pytest|unittest)\b", rest):
+            return False
+        if head in ("npm", "pnpm", "yarn", "bun") and not re.match(r"(run\s+)?test\b", rest):
+            return False
+        if head == "npx" and not re.match(r"(--?\S+\s+)*(tsc|vitest|jest)\b", rest):
+            return False
+        if (head == "tsc" or re.search(r"(^|\s)tsc(\s|$)", rest)) and not re.search(r"(^|\s)--?noEmit\b", rest):
+            return False  # tsc that emits writes ignored output a replay would not refresh
+        if head == "node" and not any(w.startswith("--test") for w in words[1:]):
+            return False
+        if head == "cargo" and not re.match(r"(\+\S+\s+)?(test|t|check|c|clippy|nextest)\b", rest):
+            return False
+    return True
+
+
+def fingerprint(cwd, text):
+    """Hash of command, cwd, git HEAD, uncommitted diff, untracked files and build-relevant env; None outside git."""
+    root = git_root(cwd)
+    if not root:
+        return None
+    try:
+        def git(*a, inp=None):
+            return subprocess.run(["git", "-C", root, *a], input=inp, capture_output=True, timeout=60, check=True).stdout
+        h = hashlib.sha256()
+        for part in (text, os.path.realpath(cwd), git("rev-parse", "HEAD"), git("diff", "HEAD", "--binary")):
+            h.update(part if isinstance(part, bytes) else part.encode())
+            h.update(b"\0")
+        untracked = git("ls-files", "-o", "--exclude-standard", "-z").split(b"\0")
+        # Artifacts the run itself writes (when a repo forgot to ignore them) must not make
+        # the next identical run look like a different tree.
+        untracked = [p for p in untracked if p and not ARTIFACT.search(p)]
+        if untracked:
+            h.update(b"\0".join(untracked))
+            h.update(git("hash-object", "--stdin-paths", inp=b"\n".join(untracked)))
+        for k in FP_ENV:
+            h.update(f"{k}={os.environ.get(k, '')}\0".encode())
+        return h.hexdigest()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+# ---------------------------------------------------------------- scheduler (pure)
+
+def pick(queued, running, avail_mb, ncpu, reserve_mb, now):
+    """Ids of queued jobs to start now, in order.
+
+    queued: dicts with id, owner, pred_mb, pred_s, cpu, t_queued.
+    running: dicts with owner, pred_mb, cur_mb, cpu."""
+    headroom = avail_mb - reserve_mb - sum(max(0, r["pred_mb"] - r["cur_mb"]) for r in running)
+    cpu_used = sum(r["cpu"] for r in running)
+    n_running = len(running)
+    per_owner = {}
+    for r in running:
+        per_owner[r["owner"]] = per_owner.get(r["owner"], 0) + 1
+    waiting = list(queued)
+    started = []
+    while waiting:
+        def fits(j):
+            return n_running == 0 or (j["pred_mb"] <= headroom and cpu_used + j["cpu"] <= ncpu)
+        # The oldest job past STARVE_S reserves the machine: while it does not fit,
+        # only short jobs may start, whoever owns them.
+        starved = min((j for j in waiting if now - j["t_queued"] >= STARVE_S), key=lambda j: j["t_queued"],
+                      default=None)
+        if starved is not None and fits(starved):
+            chosen = starved
+        else:
+            waiting.sort(key=lambda j: (per_owner.get(j["owner"], 0), j["pred_s"] - AGING * (now - j["t_queued"]),
+                                        j["t_queued"]))
+            chosen = next((j for j in waiting if fits(j) and (starved is None or j["pred_s"] < BACKFILL_S)), None)
+        if chosen is None:
+            break
+        started.append(chosen["id"])
+        waiting.remove(chosen)
+        headroom -= chosen["pred_mb"]
+        cpu_used += chosen["cpu"]
+        n_running += 1
+        per_owner[chosen["owner"]] = per_owner.get(chosen["owner"], 0) + 1
+    return started
+
+
+# ---------------------------------------------------------------- daemon
+
+def meminfo_mb():
+    out = {}
+    with open("/proc/meminfo") as f:
+        for line in f:
+            k, v = line.split(":", 1)
+            out[k] = int(v.split()[0]) // 1024
+    return out
+
+
+def ncpus():
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except OSError:
+        return os.cpu_count() or 1
+
+def lane_mb(job_id):
+    """Memory of a job running in the shell lane (bin/lane), as last reported by bin/lane (0 if none)."""
+    try:
+        with open(os.path.join(STATE, "lane", f"{job_id}.mb")) as f:
+            return int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def lane_set_up():
+    return os.path.exists(os.path.join(LANE_STATE, "lane.json"))
+
+
+
+def tree_rss_mb(roots):
+    """{root pid: RSS MB of it and all descendants} from one /proc scan."""
+    children, rss = {}, {}
+    page_mb = os.sysconf("SC_PAGE_SIZE") / (1 << 20)
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            with open(f"/proc/{name}/stat", "rb") as f:
+                data = f.read()
+        except OSError:
+            continue
+        fields = data[data.rfind(b")") + 2:].split()
+        pid = int(name)
+        children.setdefault(int(fields[1]), []).append(pid)
+        rss[pid] = int(fields[21]) * page_mb
+    out = {}
+    for root in roots:
+        total, stack, seen = 0.0, [root], set()
+        while stack:
+            p = stack.pop()
+            if p in seen:
+                continue
+            seen.add(p)
+            total += rss.get(p, 0)
+            stack.extend(children.get(p, ()))
+        out[root] = int(total)
+    return out
+
+
+def db_open():
+    con = sqlite3.connect(DB)
+    con.execute("""CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY, key TEXT, rule TEXT, cls TEXT, owner TEXT,
+        cwd TEXT, cmd TEXT, fp TEXT, queued REAL, started REAL, ended REAL, exit INTEGER, peak_mb INTEGER,
+        outcome TEXT, log TEXT)""")
+    con.execute("CREATE INDEX IF NOT EXISTS jobs_key ON jobs(key, ended)")
+    con.execute("CREATE INDEX IF NOT EXISTS jobs_fp ON jobs(fp, ended)")
+    return con
+
+
+def job_key(rule_id, text):
+    return hashlib.sha1(f"{rule_id}|{' '.join(text.split())}".encode()).hexdigest()[:16]
+
+
+class Job:
+    def __init__(self, jid, req, writer):
+        self.id, self.req, self.writer = jid, req, writer
+        self.owner = req.get("owner") or "?"
+        self.label = req.get("label") or req["cmd"][:80]
+        self.cpu = int(req.get("cpu") or 1)
+        self.pred_mb, self.pred_s = int(req.get("mem_mb") or 500), DEFAULT_S.get(req.get("cls"), 120)
+        self.t_queued, self.t_started = time.time(), None
+        self.pid, self.cur_mb, self.peak_mb = None, 0, 0
+        self.attached = []  # writers waiting for this job's result
+        self.log = os.path.join(LOGS, f"{jid}.log") if req.get("fp") else None
+        self.done = False
+
+
+class Broker:
+    def __init__(self):
+        os.makedirs(LOGS, exist_ok=True)
+        self.db = db_open()
+        self.queued, self.running = [], []
+        self.next_id = (self.db.execute("SELECT max(id) FROM jobs").fetchone()[0] or 0) + 1
+        self.ncpu = ncpus()
+        self.prune()
+
+    def prune(self):
+        rows = self.db.execute("SELECT log FROM jobs WHERE log IS NOT NULL ORDER BY id DESC LIMIT -1 OFFSET ?",
+                               (KEEP_LOGS,)).fetchall()
+        for (log,) in rows:
+            for path in (log, log + ".err"):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        self.db.execute("UPDATE jobs SET log=NULL WHERE id NOT IN (SELECT id FROM jobs WHERE log IS NOT NULL "
+                        "ORDER BY id DESC LIMIT ?)", (KEEP_LOGS,))
+        self.db.execute("DELETE FROM jobs WHERE ended < ?", (time.time() - 30 * 86400,))
+        self.db.commit()
+
+    def predict(self, job):
+        key = job_key(job.req.get("rule", "?"), job.req["cmd"])
+        job.key = key
+        rows = self.db.execute("SELECT peak_mb, ended-started FROM jobs WHERE key=? AND outcome IN ('ok','fail') "
+                               "ORDER BY id DESC LIMIT 5", (key,)).fetchall()
+        if not rows:
+            rows = self.db.execute("SELECT peak_mb, ended-started FROM jobs WHERE rule=? AND outcome IN ('ok','fail') "
+                                   "ORDER BY id DESC LIMIT 10", (job.req.get("rule", "?"),)).fetchall()
+        peaks = [r[0] for r in rows if r[0]]
+        durs = sorted(r[1] for r in rows if r[1] is not None)
+        if peaks:
+            job.pred_mb = int(max(peaks) * 1.15) + 50
+            if job.req.get("floor"):
+                # Compiles run partly in daemons outside the job's process tree (sccache
+                # server, Gradle daemon): never trust a measured peak below the class guess.
+                job.pred_mb = max(job.pred_mb, int(job.req.get("mem_mb") or 0))
+        if durs:
+            job.pred_s = durs[len(durs) // 2]
+
+    @staticmethod
+    def send(writer, msg):
+        try:
+            writer.write((json.dumps(msg) + "\n").encode())
+        except (ConnectionError, RuntimeError):
+            pass
+
+    def active_by_fp(self, fp, cmd):
+        for j in self.running + self.queued:
+            if j.req.get("fp") == fp and j.req["cmd"] == cmd and not j.done:
+                return j
+        return None
+
+    def snapshot(self):
+        m = meminfo_mb()
+        now = time.time()
+        def row(j):
+            return {"id": j.id, "owner": j.owner, "label": j.label, "rule": j.req.get("rule"), "cpu": j.cpu,
+                    "pred_mb": j.pred_mb, "pred_s": int(j.pred_s), "cur_mb": j.cur_mb, "peak_mb": j.peak_mb,
+                    "waited_s": int((j.t_started or now) - j.t_queued),
+                    "ran_s": int(now - j.t_started) if j.t_started else 0, "attached": len(j.attached)}
+        return {"avail_mb": m.get("MemAvailable", 0), "swap_free_mb": m.get("SwapFree", 0), "ncpu": self.ncpu,
+                "reserve_mb": config()["reserve_mb"],
+                "running": [row(j) for j in self.running], "queued": [row(j) for j in self.queued]}
+
+    def schedule(self):
+        if not self.queued:
+            return
+        avail = meminfo_mb().get("MemAvailable", 0)
+        now = time.time()
+        ids = pick([{"id": j.id, "owner": j.owner, "pred_mb": j.pred_mb, "pred_s": j.pred_s, "cpu": j.cpu,
+                     "t_queued": j.t_queued} for j in self.queued],
+                   [{"owner": j.owner, "pred_mb": j.pred_mb, "cur_mb": j.cur_mb, "cpu": j.cpu} for j in self.running],
+                   avail, self.ncpu, config()["reserve_mb"], now)
+        for jid in ids:
+            job = next(j for j in self.queued if j.id == jid)
+            self.queued.remove(job)
+            job.t_started = now
+            self.running.append(job)
+            self.send(job.writer, {"t": "start", "job": job.id, "log": job.log, "waited_s": round(now - job.t_queued, 1),
+                                   "cpu": job.cpu})
+
+    def eta(self, job):
+        now = time.time()
+        ahead = [j for j in self.queued if j is not job and j.t_queued <= job.t_queued]
+        lanes = max(1, len(self.running))
+        rem = sorted(max(0, j.pred_s - (now - j.t_started)) for j in self.running)
+        if self.running and not rem[0]:
+            return 0, ahead  # running jobs are past their prediction: unknown
+        return int((rem[0] if rem else 0) + sum(j.pred_s for j in ahead) / lanes), ahead
+
+    def finish(self, job, code, outcome):
+        if job.done:
+            return
+        job.done = True
+        if job in self.running:
+            self.running.remove(job)
+        if job in self.queued:
+            self.queued.remove(job)
+        ended = time.time()
+        self.db.execute("INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (job.id, getattr(job, "key", None), job.req.get("rule"), job.req.get("cls"), job.owner,
+                         job.req.get("cwd"), job.req["cmd"], job.req.get("fp"), job.t_queued, job.t_started, ended,
+                         code, job.peak_mb or None, outcome, job.log))
+        self.db.commit()
+        try:
+            os.remove(os.path.join(STATE, "lane", f"{job.id}.mb"))
+        except OSError:
+            pass
+        for w in job.attached:
+            self.send(w, {"t": "done", "exit": code, "outcome": outcome, "log": job.log})
+        self.schedule()
+
+    def kill_group(self, job):
+        if not job.pid:
+            return
+        try:
+            os.killpg(job.pid, signal.SIGTERM)
+        except OSError:
+            return
+        def later():
+            try:
+                os.killpg(job.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        asyncio.get_running_loop().call_later(5, later)
+
+    async def handle(self, reader, writer):
+        try:
+            line = await reader.readline()
+            req = json.loads(line or b"{}")
+        except (ValueError, ConnectionError):
+            writer.close()
+            return
+        op = req.get("op")
+        if op == "status":
+            self.send(writer, self.snapshot())
+        elif op == "history":
+            rows = self.db.execute("SELECT id, owner, rule, outcome, exit, queued, started, ended, peak_mb, cmd FROM jobs "
+                                   "ORDER BY id DESC LIMIT ?", (int(req.get("n", 20)),)).fetchall()
+            self.send(writer, {"rows": rows})
+        elif op == "submit":
+            await self.submit(req, reader, writer)
+            return
+        try:
+            await writer.drain()
+        except ConnectionError:
+            pass
+        writer.close()
+
+    async def submit(self, req, reader, writer):
+        fp = req.get("fp")
+        if fp and req.get("cache"):
+            ttl = config().get("cache_ttl_s", 0)
+            row = self.db.execute("SELECT id, log, ended FROM jobs WHERE fp=? AND cmd=? AND outcome='ok' AND ended>? "
+                                  "ORDER BY id DESC LIMIT 1", (fp, req["cmd"], time.time() - ttl)).fetchone()
+            if row and row[1] and os.path.exists(row[1]):
+                self.send(writer, {"t": "cached", "job": row[0], "log": row[1], "ended": row[2], "exit": 0})
+                self.db.execute("INSERT INTO jobs (id, rule, cls, owner, cwd, cmd, fp, queued, started, ended, exit, "
+                                "outcome) VALUES (?,?,?,?,?,?,?,?,?,?,0,'cached')",
+                                (self.next_id, req.get("rule"), req.get("cls"), req.get("owner"), req.get("cwd"),
+                                 req["cmd"], fp, time.time(), time.time(), time.time()))
+                self.next_id += 1
+                self.db.commit()
+                await self.close(writer)
+                return
+        if fp:
+            leader = self.active_by_fp(fp, req["cmd"])
+            if leader:
+                leader.attached.append(writer)
+                self.send(writer, {"t": "attach", "job": leader.id, "owner": leader.owner, "log": leader.log})
+                await self.wait_attached(leader, reader, writer)
+                return
+        job = Job(self.next_id, req, writer)
+        self.next_id += 1
+        self.predict(job)
+        self.queued.append(job)
+        self.schedule()
+        if job in self.queued:
+            eta, ahead = self.eta(job)
+            self.send(writer, {"t": "queued", "job": job.id, "eta_s": eta,
+                               "ahead": [f"{j.label} [{j.owner}]" for j in self.running + ahead][:6]})
+        code, outcome = -1, "lost"
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                msg = json.loads(line)
+                if msg.get("t") == "pid":
+                    job.pid = int(msg["pid"])
+                elif msg.get("t") == "exit":
+                    code = int(msg["code"])
+                    outcome = msg.get("outcome") or ("ok" if code == 0 else "fail")
+                    break
+        except (ValueError, ConnectionError):
+            pass
+        if outcome == "lost":
+            self.kill_group(job)  # the client died; do not leave its job running unaccounted
+        self.finish(job, code, outcome)
+        await self.close(writer)
+
+    async def wait_attached(self, leader, reader, writer):
+        while not leader.done:
+            try:
+                await asyncio.wait_for(reader.read(1), timeout=TICK_S)
+                if reader.at_eof():
+                    if writer in leader.attached:
+                        leader.attached.remove(writer)
+                    break
+            except asyncio.TimeoutError:
+                continue
+            except ConnectionError:
+                break
+        await self.close(writer)
+
+    @staticmethod
+    async def close(writer):
+        try:
+            await writer.drain()
+            writer.close()
+        except (ConnectionError, RuntimeError):
+            pass
+
+    async def tick(self):
+        last_prune = time.time()
+        while True:
+            await asyncio.sleep(TICK_S)
+            if time.time() - last_prune > 600:
+                self.prune()
+                last_prune = time.time()
+            live = [j for j in self.running if j.pid]
+            if live:
+                sizes = await asyncio.to_thread(tree_rss_mb, [j.pid for j in live])
+                for j in live:
+                    # Jobs in the shell lane run outside this tree; bin/lane reports their memory.
+                    j.cur_mb = sizes.get(j.pid, 0) + lane_mb(j.id)
+                    j.peak_mb = max(j.peak_mb, j.cur_mb)
+            self.schedule()
+            if not self.queued and not self.running and code_changed():
+                # Upgraded on disk: hand over to the new code while idle; the next client starts it.
+                try:
+                    os.unlink(SOCK)
+                except OSError:
+                    pass
+                os._exit(0)
+
+
+_code_mtime = None
+
+
+def code_changed():
+    global _code_mtime
+    try:
+        now = os.stat(os.path.realpath(__file__)).st_mtime_ns
+    except OSError:
+        return False
+    if _code_mtime is None:
+        _code_mtime = now
+    return now != _code_mtime
+
+
+async def serve_main():
+    code_changed()  # baseline: the code this daemon runs
+    os.makedirs(STATE, exist_ok=True)
+    lock = open(os.path.join(STATE, "heavy.lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return 0  # another broker owns the socket
+    try:
+        os.unlink(SOCK)
+    except FileNotFoundError:
+        pass
+    broker = Broker()
+    with open(os.path.join(STATE, "heavy.pid"), "w") as f:
+        f.write(str(os.getpid()))
+    server = await asyncio.start_unix_server(broker.handle, path=SOCK)
+    os.chmod(SOCK, 0o600)
+    asyncio.get_running_loop().create_task(broker.tick())
+    async with server:
+        await server.serve_forever()
+
+
+# ---------------------------------------------------------------- client
+
+def eprint(msg):
+    print(f"heavy: {msg}", file=sys.stderr, flush=True)
+
+
+def connect(autostart=True):
+    for attempt in range(30):
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            s.connect(SOCK)
+            return s
+        except OSError:
+            s.close()
+        if not autostart:
+            return None
+        if attempt == 0:
+            try:
+                os.makedirs(STATE, exist_ok=True)
+                with open(os.path.join(STATE, "heavy.log"), "ab") as log:
+                    subprocess.Popen([sys.executable, os.path.realpath(__file__), "serve"], stdin=subprocess.DEVNULL,
+                                     stdout=log, stderr=log, cwd="/", start_new_session=True, close_fds=True)
+            except OSError:
+                return None  # cannot start a broker here: callers run the job directly
+        time.sleep(0.1)
+    return None
+
+
+def request(msg):
+    s = connect(autostart=True)
+    if not s:
+        return None
+    with s, s.makefile("rwb") as f:
+        f.write((json.dumps(msg) + "\n").encode())
+        f.flush()
+        line = f.readline()
+    return json.loads(line) if line else None
+
+
+def exec_direct(argv, timeout=0):
+    """Run outside the broker; a --timeout still applies (the extension lifted the tool's own)."""
+    if timeout:
+        return run_job(argv, os.getcwd(), os.environ.get("HEAVY_JOB_ID") or "direct", None, timeout, None)[0]
+    try:
+        os.execvp(argv[0], argv)
+    except OSError as e:
+        eprint(f"cannot run {argv[0]}: {e}")
+        return 127
+
+
+def command_text(argv):
+    if len(argv) >= 3 and os.path.basename(argv[0]) in ("bash", "sh") and argv[1] == "-c":
+        return argv[2]
+    return shlex.join(argv)
+
+
+def replay(log):
+    """Write a finished job's stdout (log) and stderr (log.err) back to ours."""
+    for path, stream in ((log, sys.stdout.buffer), (log + ".err", sys.stderr.buffer)):
+        try:
+            with open(path, "rb") as f:
+                while chunk := f.read(1 << 16):
+                    stream.write(chunk)
+            stream.flush()
+        except FileNotFoundError:
+            if path == log:
+                eprint("result log missing")
+        except OSError:
+            pass
+
+
+def fmt_s(s):
+    s = int(s)
+    return f"{s // 60}m{s % 60:02d}s" if s >= 60 else f"{s}s"
+
+
+def run_job(argv, cwd, job_id, log, timeout, sock_file):
+    """Run argv in its own process group under the run-time limit; returns (exit code, outcome).
+
+    outcome: ok | fail | timeout | aborted (we were signalled). With a log, stdout and
+    stderr are teed to log and log.err for jobs sharing or replaying this result."""
+    env = dict(os.environ, HEAVY_JOB_ID=str(job_id))
+    interactive = os.isatty(0)
+    def pre():
+        if not interactive:
+            os.setpgid(0, 0)  # own group: timeouts and aborts kill the whole job tree
+        try:
+            os.nice(NICE)
+        except OSError:
+            pass
+    capture = log is not None
+    try:
+        p = subprocess.Popen(argv, cwd=cwd, env=env, preexec_fn=pre,
+                             stdout=subprocess.PIPE if capture else None, stderr=subprocess.PIPE if capture else None)
+    except OSError as e:
+        eprint(f"cannot run {argv[0]}: {e}")
+        return 127, "fail"
+    if sock_file:
+        sock_file.write((json.dumps({"t": "pid", "pid": p.pid}) + "\n").encode())
+        sock_file.flush()
+    aborted = []
+    def kill(sig):
+        try:
+            os.killpg(p.pid, sig) if not interactive else p.send_signal(sig)
+        except OSError:
+            pass
+    def forward(sig, _frame):
+        aborted.append(sig)
+        kill(sig)
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, forward)
+    pumps = []
+    if capture:
+        def copy(src, path, dst):
+            # Keep draining into the log even after our reader goes away (`| head`):
+            # a full pipe would otherwise block the job forever.
+            with open(path, "wb") as out:
+                while chunk := src.read1(1 << 16):
+                    out.write(chunk)
+                    if dst is not None:
+                        try:
+                            dst.write(chunk)
+                            dst.flush()
+                        except OSError:
+                            dst = None
+        for src, path, dst in ((p.stdout, log, sys.stdout.buffer), (p.stderr, log + ".err", sys.stderr.buffer)):
+            t = threading.Thread(target=copy, args=(src, path, dst), daemon=True)
+            t.start()
+            pumps.append(t)
+    outcome = None
+    try:
+        rc = p.wait(timeout=timeout or None)
+    except subprocess.TimeoutExpired:
+        eprint(f"run-time limit {fmt_s(timeout)} reached (queue time not counted); stopping the job")
+        kill(signal.SIGTERM)
+        try:
+            rc = p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            kill(signal.SIGKILL)
+            rc = p.wait()
+        rc, outcome = 124, "timeout"
+    for t in pumps:
+        t.join(timeout=10)
+    if rc < 0:
+        rc = 128 - rc
+    if aborted and not outcome:
+        outcome = "aborted"
+    return rc, outcome or ("ok" if rc == 0 else "fail")
+
+
+def cmd_run(args):
+    argv = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
+    if not argv:
+        eprint("nothing to run")
+        return 2
+    if os.environ.get("HEAVY_JOB_ID") or os.environ.get("HEAVY") == "off":
+        return exec_direct(argv, args.timeout)
+    cwd = os.getcwd()
+    text = command_text(argv)
+    rule = classify(text, cwd) if not args.rule else dict(classify(text, cwd) or {}, id=args.rule)
+    if not rule or rule.get("class") == "none":
+        return exec_direct(argv, args.timeout)
+    cacheable = rule.get("cache") and not args.no_cache and not os.environ.get("HEAVY_NO_CACHE") and pure(text, cwd)
+    fp = fingerprint(cwd, text) if cacheable else None
+    s = connect()
+    if not s:
+        eprint("broker unavailable; running directly")
+        os.environ["HEAVY_JOB_ID"] = "direct"  # nested tools must not retry the broker
+        return exec_direct(argv, args.timeout)
+    f = s.makefile("rwb")
+    label = re.sub(r"^(cd\s+\S+\s*&&\s*)+", "", " ".join(text.split()))[:70]
+    req = {"op": "submit", "cmd": text, "cwd": cwd, "rule": rule["id"], "cls": rule["class"],
+           "mem_mb": rule.get("mem_mb"), "cpu": rule.get("cpu"), "floor": bool(rule.get("floor")),
+           "owner": args.owner or os.environ.get("HEAVY_OWNER") or os.path.basename(git_root(cwd) or cwd),
+           "label": label, "fp": fp, "cache": bool(cacheable)}
+    f.write((json.dumps(req) + "\n").encode())
+    f.flush()
+    t0 = time.time()
+    for line in f:
+        msg = json.loads(line)
+        t = msg.get("t")
+        if t == "queued":
+            ahead = "; ".join(msg.get("ahead") or [])
+            eta = f"~{fmt_s(msg['eta_s'])}" if msg.get("eta_s") else "when memory frees up"
+            eprint(f"queued (est. start {eta}) behind: {ahead or 'memory headroom'}")
+        elif t == "cached":
+            replay(msg["log"])
+            eprint(f"same command on the same tree passed {fmt_s(time.time() - msg['ended'])} ago "
+                   f"(job {msg['job']}); replayed its output. HEAVY_NO_CACHE=1 reruns it.")
+            return 0
+        elif t == "attach":
+            eprint(f"identical job {msg['job']} is already running for {msg.get('owner')}; sharing its result")
+        elif t == "done":
+            if msg.get("outcome") not in ("ok", "fail") or not msg.get("log"):
+                # Lost, aborted or cut off by the other caller's limit: not a result for us.
+                eprint(f"shared job ended without a result ({msg.get('outcome')}); running it here")
+                f.close()
+                s.close()
+                return cmd_run(args)
+            replay(msg["log"])
+            return int(msg.get("exit", 1))
+        elif t == "start":
+            waited = time.time() - t0
+            if waited >= 5:
+                eprint(f"started after {fmt_s(waited)} in queue")
+            if rule.get("lane") and os.environ.get("HEAVY_LANE") != "off" and pure(text, cwd) and lane_set_up():
+                argv = [LANE, "run", "--cwd", cwd, "--", text]
+            rc, outcome = run_job(argv, cwd, msg["job"], msg.get("log"), args.timeout, f)
+            try:
+                f.write((json.dumps({"t": "exit", "code": rc, "outcome": outcome}) + "\n").encode())
+                f.flush()
+            except OSError:
+                pass
+            return rc
+    # Broker went away before admitting us: do not lose the work.
+    eprint("broker connection lost; running directly")
+    os.environ["HEAVY_JOB_ID"] = "direct"
+    return exec_direct(argv, args.timeout)
+
+
+def cmd_status(args):
+    snap = request({"op": "status"})
+    if snap is None:
+        eprint("broker not running")
+        return 1
+    if args.json:
+        print(json.dumps(snap, indent=1))
+        return 0
+    print(f"mem avail {snap['avail_mb']} MB (reserve {snap['reserve_mb']}), swap free {snap['swap_free_mb']} MB, "
+          f"{snap['ncpu']} cpus")
+    for name in ("running", "queued"):
+        print(f"{name}: {len(snap[name])}")
+        for j in snap[name]:
+            extra = (f"ran {fmt_s(j['ran_s'])}/{fmt_s(j['pred_s'])} rss {j['cur_mb']}/{j['pred_mb']} MB"
+                     if name == "running" else f"waiting {fmt_s(j['waited_s'])}, needs {j['pred_mb']} MB ~{fmt_s(j['pred_s'])}")
+            print(f"  #{j['id']} [{j['owner']}] {j['label']} — {extra}" + (f", +{j['attached']} sharing" if j["attached"] else ""))
+    return 0
+
+
+def cmd_history(args):
+    res = request({"op": "history", "n": args.n})
+    if res is None:
+        eprint("broker not running")
+        return 1
+    for jid, owner, rule, outcome, code, q, st, en, peak, cmd in res["rows"]:
+        wait = fmt_s((st or en) - q) if q else "-"
+        ran = fmt_s(en - st) if st and en else "-"
+        print(f"#{jid} {outcome or '?':7} wait {wait:>6} ran {ran:>6} peak {peak or '-':>5} MB [{owner}] {rule}: "
+              f"{' '.join(cmd.split())[:70]}")
+    return 0
+
+
+def cmd_classify(args):
+    argv = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
+    text = command_text(argv)
+    rule = classify(text, os.getcwd())
+    print(json.dumps({"rule": rule, "cacheable": bool(rule and rule.get("cache") and pure(text, os.getcwd()))}))
+    return 0
+
+
+def live_limits():
+    """The resource limits in force on this phone, for --help."""
+    cfg = config()
+    classes = ", ".join(f"{name} {c.get('mem_mb')} MB/{c.get('cpu', 1)} cpu"
+                        for name, c in (cfg.get("classes") or {}).items() if isinstance(c, dict))
+    return (f"This phone: MemTotal {MEMTOTAL_MB} MB (rules measured at {REF_MEMTOTAL_MB} MB), {ncpus()} CPU slots "
+            f"(cores the app may use); reserve {cfg['reserve_mb']} MB; class guesses: {classes or 'none'}.")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="heavy", description=__doc__.split("\n\n")[0], epilog=live_limits())
+    sub = ap.add_subparsers(dest="op", required=True)
+    r = sub.add_parser("run", help="run a command through the broker")
+    r.add_argument("--owner")
+    r.add_argument("--rule", help="force a rule id instead of matching")
+    r.add_argument("--timeout", type=float, default=0, help="run-time limit in seconds, counted from admission")
+    r.add_argument("--no-cache", action="store_true")
+    r.add_argument("cmd", nargs=argparse.REMAINDER)
+    st = sub.add_parser("status", help="running and queued jobs")
+    st.add_argument("--json", action="store_true")
+    h = sub.add_parser("history", help="recent jobs")
+    h.add_argument("-n", type=int, default=20)
+    c = sub.add_parser("classify", help="show the rule a command matches")
+    c.add_argument("cmd", nargs=argparse.REMAINDER)
+    sub.add_parser("serve", help="run the broker daemon (auto-started by clients)")
+    args = ap.parse_args(argv)
+    if args.op == "serve":
+        return asyncio.run(serve_main())
+    return {"run": cmd_run, "status": cmd_status, "history": cmd_history, "classify": cmd_classify}[args.op](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

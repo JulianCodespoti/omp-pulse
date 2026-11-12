@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""Read-only latency baseline for the agent's phone control paths.
+
+Measures what one agent "observe" step costs today, per transport:
+  cli        `android --json status` as a fresh subprocess (what tool calls pay now)
+  http-new   in-process HTTP, new TCP connection per request (urllib)
+  http-keep  in-process HTTP over one persistent connection (if the server allows it)
+for PhoneApi `status` and `ui_dump`. Never taps, types or changes state.
+
+Usage: phone-bench [-n N] [--warmup W] [--ops status,ui_dump] [--json]
+"""
+import argparse
+import http.client
+import json
+import os
+import statistics
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+ENDPOINT_FILE = "/root/.config/omp-phone/endpoint.json"
+DEFAULT_PORT = 7690  # app builds that predate endpoint.json
+
+
+def phone_port():
+    """PhoneApi port from the app's endpoint.json (rewritten on every app start), else the old fixed port."""
+    try:
+        with open(ENDPOINT_FILE) as f:
+            return urllib.parse.urlsplit(json.load(f).get("phoneApi")).port or DEFAULT_PORT
+    except (OSError, ValueError, AttributeError, TypeError):
+        return DEFAULT_PORT
+
+
+HOST, PORT = "127.0.0.1", phone_port()
+TOKEN_FILE = "/root/.config/omp-phone/token"
+ANDROID = os.path.join(os.path.dirname(os.path.abspath(__file__)), "android")
+
+
+def token():
+    with open(TOKEN_FILE) as f:
+        return f.read().strip()
+
+
+def headers(tok):
+    return {"Authorization": "Bearer " + tok, "Content-Type": "application/json"}
+
+
+def http_new(tok, op):
+    req = urllib.request.Request("http://%s:%d/v1/%s" % (HOST, PORT, op), data=b"{}", headers=headers(tok))
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return len(r.read())
+
+
+class Keep:
+    """One HTTP/1.1 connection reused across requests; counts server-forced reconnects."""
+
+    def __init__(self, tok):
+        self.h = headers(tok)
+        self.conn = None
+        self.reconnects = 0
+
+    def __call__(self, op):
+        if self.conn is None:
+            self.conn = http.client.HTTPConnection(HOST, PORT, timeout=30)
+            self.reconnects += 1
+        self.conn.request("POST", "/v1/" + op, body=b"{}", headers=self.h)
+        r = self.conn.getresponse()
+        n = len(r.read())
+        if r.getheader("Connection", "").lower() == "close" or r.will_close:
+            self.conn.close()
+            self.conn = None
+        return n
+
+
+def cli(op):
+    if op != "status":
+        return None  # ui_dump has no plain CLI command; cost is the same startup plus the call
+    subprocess.run([ANDROID, "--json", "status"], check=True, stdout=subprocess.DEVNULL)
+    return 0
+
+
+def sample(fn, n, warmup):
+    for _ in range(warmup):
+        fn()
+    out, size = [], 0
+    for _ in range(n):
+        t = time.perf_counter()
+        size = fn()
+        out.append((time.perf_counter() - t) * 1000)
+    return out, size
+
+
+def summary(ms):
+    s = sorted(ms)
+    p95 = s[min(len(s) - 1, int(round(0.95 * (len(s) - 1))))]
+    return {"n": len(s), "median_ms": round(statistics.median(s), 2), "p95_ms": round(p95, 2),
+            "min_ms": round(s[0], 2), "max_ms": round(s[-1], 2)}
+
+
+def mcp_bench(n, warmup):
+    """Latency of tools/call inside one persistent phone-mcp session (protocol-level)."""
+    import json as _json
+    import subprocess as _subprocess
+    server = _subprocess.Popen([os.path.join(os.path.dirname(ANDROID), "phone-mcp")],
+                               stdin=_subprocess.PIPE, stdout=_subprocess.PIPE, text=True, bufsize=1)
+
+    def rpc(message):
+        server.stdin.write(_json.dumps(message) + "\n")
+        server.stdin.flush()
+        return _json.loads(server.stdout.readline())
+
+    def notify(message):
+        server.stdin.write(_json.dumps(message) + "\n")
+        server.stdin.flush()
+    rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "bench", "version": "1"}}})
+    notify({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    listed = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    tools = [tool["name"] for tool in listed["result"]["tools"]]
+    rows = []
+    for index, name in enumerate(("observe", "act"), start=10):
+        args = {"diff_only": True} if name == "observe" else {"steps": [{"sleep_ms": 50}]}
+        for _ in range(warmup):
+            rpc({"jsonrpc": "2.0", "id": index, "method": "tools/call",
+                 "params": {"name": name, "arguments": args}})
+        times, size = [], 0
+        for _ in range(n):
+            t = time.perf_counter()
+            reply = rpc({"jsonrpc": "2.0", "id": index, "method": "tools/call",
+                         "params": {"name": name, "arguments": args}})
+            times.append((time.perf_counter() - t) * 1000)
+            size = len(reply["result"]["content"][0]["text"])
+        rows.append({"op": name, "transport": "mcp-session", "response_bytes": size, **summary(times)})
+    server.stdin.close()
+    server.terminate()
+    return tools, rows
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("-n", type=int, default=20)
+    ap.add_argument("--warmup", type=int, default=3)
+    ap.add_argument("--ops", default="status,ui_dump")
+    ap.add_argument("--mcp", action="store_true", help="also measure the persistent phone-mcp session")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    tools, mcp_rows = ([], [])
+    if a.mcp:
+        tools, mcp_rows = mcp_bench(a.n, a.warmup)
+    tok = token()
+    keep = Keep(tok)
+    rows = []
+    for op in a.ops.split(","):
+        for name, fn in (("cli", lambda: cli(op)), ("http-new", lambda: http_new(tok, op)), ("http-keep", lambda: keep(op))):
+            if name == "cli" and op != "status":
+                continue
+            before = keep.reconnects
+            ms, size = sample(fn, a.n, a.warmup)
+            row = {"op": op, "transport": name, "response_bytes": size, **summary(ms)}
+            if name == "http-keep":
+                row["connections_opened"] = keep.reconnects - before
+            rows.append(row)
+    rows += mcp_rows
+    if a.json:
+        print(json.dumps({"host": "%s:%d" % (HOST, PORT), "tools": tools, "results": rows}, indent=2))
+        return
+    if tools:
+        print("phone-mcp tools: " + ", ".join(tools))
+    for r in rows:
+        extra = " conns=%d" % r["connections_opened"] if "connections_opened" in r else ""
+        print("%-8s %-11s median %8.2f ms  p95 %8.2f ms  bytes %7s%s"
+              % (r["op"], r["transport"], r["median_ms"], r["p95_ms"], r["response_bytes"], extra))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, http.client.HTTPException, subprocess.CalledProcessError) as e:
+        sys.exit("phone-bench: %s (is omp-pulse open?)" % e)

@@ -1,0 +1,58 @@
+# Rust build output
+/target
+
+# scripts/release/release.sh output
+/dist/
+
+# Local artefacts: stray logs from bench/test runs, Python bytecode from the
+# gate's unittest steps, editor droppings
+*.log
+__pycache__/
+.DS_Store
+Thumbs.db
+
+# Bench corpus if BENCH_CACHE is pointed at the repo (default lives in
+# ~/.cache/omp-pulse-bench, outside the repo)
+bench/.cache/
+
+# The hand-written unit that used to live here hardcoded one developer's paths.
+# `omp-pulse service install` generates the right unit for the machine it runs
+# on, so a checked-in copy is a trap rather than a convenience.
+omp-pulse.service
+
+# UI captures and audits (scripts/ui/states/): megabytes of PNGs, reproducible
+# on demand.
+/audit/
+
+# Match both installed directories and worktree dependency symlinks.
+/web/node_modules
+web/dist/
+/node_modules/
+website/dist/
+/web/dev-preview/
+
+# Installed from mobile/package-lock.json by `npm ci`; the APK build scripts
+# run it when the tree is missing or older than the lock. Gradle builds the
+# Capacitor library module from mobile/node_modules/@capacitor/android, so it
+# must be installed, not committed (the registry copy is used unpatched).
+/mobile/node_modules/
+
+# Generated web client. `include_dir!` embeds public/ at COMPILE time, so this
+# directory must EXIST to build — but it is derived from web/src and every
+# deploy rewrites ~5 MB of content-hashed assets, which does not belong in
+# history. build.rs fails with the exact command to run when it is missing, so
+# a fresh clone gets an error rather than a daemon that silently 404s /app/.
+# No trailing slash: a worktree may link it to another checkout's build.
+/public/app
+
+# Downloadable APK + its manifest: rebuilt by scripts/deploy/pulse-deploy.sh on every
+# deploy and embedded from public/ at compile time. Same reasoning as
+# /public/app/ — derived, ~2.5 MB, does not belong in history.
+/public/app-release.apk
+/public/app-release.json
+
+# Agent and tooling scratch, not project source.
+/.tmp/
+/.local/
+/local/
+/memory/

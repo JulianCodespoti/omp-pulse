@@ -1,0 +1,32 @@
+schema = 1
+id = "provider-usage"
+name = "Provider usage"
+version = "0.1.0"
+description = "How much of each model provider's usage limits you have used, from omp usage"
+client = "client.js"
+slots = ["composer.status", "drawer", "page"]
+# Needed to read the open conversation's model, so the composer chip can show
+# that provider's usage. Without it the chip falls back to the tightest window.
+permissions = ["session.read"]
+
+# omp's own usage report. The first fetch can take tens of seconds; later runs
+# read omp's cache, so the timeout is generous and the interval is long.
+# "omp" as the program name means the daemon's own omp binary.
+[[sources]]
+id = "usage"
+command = ["omp", "usage", "--json", "--redact"]
+interval_s = 300
+timeout_s = 30
+
+[[options]]
+id = "warn_at"
+label = "Warn from this used percentage"
+type = "choice"
+choices = ["70", "80", "90"]
+default = "80"
+
+[[options]]
+id = "composer_chip"
+label = "Show a chip beside the composer"
+type = "bool"
+default = true

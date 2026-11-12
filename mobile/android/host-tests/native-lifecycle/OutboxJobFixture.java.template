@@ -1,0 +1,267 @@
+package com.omppulse.app;
+
+import java.util.ArrayList;
+import java.util.List;
+
+final class OutboxJobFixture {
+    private static final String TAG = "fixture";
+    private static final int JOB_ID = 0x4f4d50;
+    private static final long NO_RETRY = Long.MAX_VALUE;
+    private static final Object LOCK = new Object();
+    private static final Handler MAIN = new Handler();
+    private static boolean scheduled;
+    private static boolean running;
+    private static long scheduledDelay = NO_RETRY;
+    private static long nextDelay = NO_RETRY;
+    private static Context application;
+    private static JobParameters activeJob;
+    private static long activeGeneration;
+    private long startedGeneration;
+    private int finished;
+    private int finishRetries;
+    private Runnable finishHook;
+    private static final List<Runnable> completions = new ArrayList<>();
+    private static final JobScheduler SCHEDULER = new JobScheduler();
+
+    private static final class Handler {
+        final List<Runnable> queued = new ArrayList<>();
+        boolean post(Runnable task) { queued.add(task); return true; }
+        void runNext() { queued.remove(0).run(); }
+    }
+    private static final class Context {
+        static final String JOB_SCHEDULER_SERVICE = "jobscheduler";
+        Object getSystemService(String name) { return SCHEDULER; }
+    }
+    private static final class JobParameters {
+        private final int id;
+        JobParameters() { this(JOB_ID); }
+        JobParameters(int id) { this.id = id; }
+        int getJobId() { return id; }
+    }
+    private static final class NativeOutboxJob {}
+    private static final class ComponentName {
+        ComponentName(Context context, Class<?> service) {}
+    }
+    private static final class JobInfo {
+        static final int NETWORK_TYPE_ANY = 1;
+        long delay;
+        boolean persisted;
+        private static final class Builder {
+            private final JobInfo info = new JobInfo();
+            Builder(int id, ComponentName service) {}
+            Builder setRequiredNetworkType(int network) { return this; }
+            Builder setPersisted(boolean value) { info.persisted = value; return this; }
+            Builder setMinimumLatency(long delay) { info.delay = delay; return this; }
+            JobInfo build() { return info; }
+        }
+    }
+    private static final class JobScheduler {
+        static final int RESULT_SUCCESS = 1;
+        boolean accept = true;
+        boolean durable;
+        int attempts;
+        int schedules;
+        long delay;
+        Runnable scheduleHook;
+        int schedule(JobInfo info) {
+            attempts++;
+            check(info.persisted, "replacement recovery is persisted");
+            Runnable hook = scheduleHook;
+            scheduleHook = null;
+            if (hook != null) hook.run();
+            if (!accept) return 0;
+            schedules++;
+            durable = true;
+            delay = info.delay;
+            return RESULT_SUCCESS;
+        }
+    }
+    private static final class Log {
+        static void w(String tag, String message) {}
+    }
+    private static final class NativeOutbox {
+        static void runJob(OutboxJobFixture service, Runnable done) { completions.add(done); }
+    }
+    private Context getApplicationContext() { return new Context(); }
+    private void jobFinished(JobParameters parameters, boolean retry) {
+        finished++;
+        if (retry) finishRetries++;
+        Runnable hook = finishHook;
+        finishHook = null;
+        if (hook != null) hook.run();
+        // Deliberately do not acknowledge retry persistence here: Android queues
+        // jobFinished internally, so a stop may reach the scheduler first.
+    }
+
+    // EXACT_JOB_METHODS
+
+    private static int assertions;
+    private static void check(boolean condition, String message) {
+        assertions++;
+        if (!condition) throw new AssertionError(message);
+    }
+    private static void reset() {
+        scheduled = false;
+        running = false;
+        scheduledDelay = NO_RETRY;
+        nextDelay = NO_RETRY;
+        application = null;
+        activeJob = null;
+        activeGeneration = 0;
+        completions.clear();
+        MAIN.queued.clear();
+        SCHEDULER.accept = true;
+        SCHEDULER.durable = false;
+        SCHEDULER.attempts = 0;
+        SCHEDULER.schedules = 0;
+        SCHEDULER.delay = 0;
+        SCHEDULER.scheduleHook = null;
+    }
+    private static void completeWorker() {
+        completions.remove(0).run();
+    }
+
+    private static void interruptedRecovery() {
+        reset();
+        OutboxJobFixture old = new OutboxJobFixture();
+        JobParameters interrupted = new JobParameters();
+        old.onStartJob(interrupted);
+        check(old.onStopJob(new JobParameters()),
+                "separately parceled same-ID stop synchronously requests durable recovery");
+        check(SCHEDULER.attempts == 0, "stop relies on scheduler acknowledgement, not an async task");
+        // Simulate reclamation before any callback from the interrupted worker runs.
+        Runnable oldCompletion = completions.remove(0);
+        OutboxJobFixture restarted = new OutboxJobFixture();
+        JobParameters recovered = new JobParameters();
+        restarted.onStartJob(recovered);
+        oldCompletion.run();
+        check(MAIN.queued.size() == 1 && old.finished == 0,
+                "worker completion only posts to the lifecycle thread");
+        MAIN.runNext();
+        check(running && activeJob == recovered && old.finished == 0,
+                "late stopped generation cannot finish a replacement service's job");
+        check(!old.onStopJob(new JobParameters()) && activeJob == recovered,
+                "old service stop cannot release newer same-ID ownership");
+        completeWorker();
+        MAIN.runNext();
+        check(!running && activeJob == null && restarted.finished == 1,
+                "recovered idle drain completes normally");
+        check(!restarted.onStopJob(new JobParameters()) && SCHEDULER.schedules == 0,
+                "completed empty drain cannot create an idle retry loop");
+    }
+
+    private static void stopBeforeQueuedCompletion() {
+        reset();
+        OutboxJobFixture service = new OutboxJobFixture();
+        service.onStartJob(new JobParameters());
+        nextDelay = 5_000;
+        completeWorker();
+        check(service.onStopJob(new JobParameters()),
+                "stop before posted completion preserves unknown pending work");
+        JobParameters newer = new JobParameters();
+        service.onStartJob(newer);
+        MAIN.runNext();
+        check(activeJob == newer && running && service.finished == 0,
+                "same-service newer generation fences the queued old completion");
+        check(!service.onStopJob(new JobParameters(JOB_ID + 1)) && activeJob == newer,
+                "a different scheduler ID cannot stop the active job");
+        nextDelay = 5_000;
+        SCHEDULER.scheduleHook = () -> check(activeJob == newer && running,
+                "pending completion retains ownership until synchronous scheduling returns");
+        service.finishHook = () -> check(SCHEDULER.durable && activeJob == newer,
+                "pending retry is durable before jobFinished or ownership retirement");
+        completeWorker();
+        MAIN.runNext();
+        check(SCHEDULER.schedules == 1 && SCHEDULER.delay == 5_000
+                        && service.finished == 1 && service.finishRetries == 0,
+                "normal completion persists the requested retry delay exactly once");
+        check(!service.onStopJob(new JobParameters()) && SCHEDULER.durable,
+                "stop after completion may decline retry only after durable replacement");
+    }
+
+    private static void replacementDuringSchedule() {
+        reset();
+        OutboxJobFixture service = new OutboxJobFixture();
+        service.onStartJob(new JobParameters());
+        nextDelay = 5_000;
+        JobParameters newer = new JobParameters();
+        SCHEDULER.scheduleHook = () -> {
+            check(service.onStopJob(new JobParameters()),
+                    "same-ID replacement stop can run during synchronous scheduling");
+            service.onStartJob(newer);
+        };
+        completeWorker();
+        MAIN.runNext();
+        check(activeJob == newer && running && service.finished == 0,
+                "old schedule completion cannot finish or retire the newly started run");
+        check(!scheduled && scheduledDelay == NO_RETRY,
+                "old schedule acknowledgement cannot overwrite newer start bookkeeping");
+        nextDelay = 8_000;
+        completeWorker();
+        MAIN.runNext();
+        check(SCHEDULER.schedules == 2 && SCHEDULER.delay == 8_000 && service.finished == 1,
+                "new generation persists its own retry rather than trusting the old running job");
+        check(!running && activeJob == null,
+                "new generation alone retires its ownership after persistence");
+    }
+
+    private static void stopDuringSchedule() {
+        reset();
+        OutboxJobFixture service = new OutboxJobFixture();
+        service.onStartJob(new JobParameters());
+        nextDelay = 5_000;
+        SCHEDULER.scheduleHook = () -> check(service.onStopJob(new JobParameters()),
+                "stop during replacement scheduling acknowledges recovery before returning");
+        completeWorker();
+        MAIN.runNext();
+        check(activeJob == null && !running && service.finished == 0 && SCHEDULER.durable,
+                "stopped completion does not call jobFinished after scheduler replacement");
+    }
+
+    private static void replacementDuringFinish() {
+        reset();
+        OutboxJobFixture service = new OutboxJobFixture();
+        service.onStartJob(new JobParameters());
+        JobParameters newer = new JobParameters();
+        service.finishHook = () -> service.onStartJob(newer);
+        completeWorker();
+        MAIN.runNext();
+        check(activeJob == newer && running && service.finished == 1,
+                "returning from old jobFinished cannot retire a newer generation");
+        completeWorker();
+        MAIN.runNext();
+        check(activeJob == null && service.finished == 2 && SCHEDULER.schedules == 0,
+                "replacement empty drain completes without retries");
+    }
+
+    private static void declinedScheduleRecovery() {
+        reset();
+        OutboxJobFixture service = new OutboxJobFixture();
+        service.onStartJob(new JobParameters());
+        nextDelay = 5_000;
+        SCHEDULER.accept = false;
+        completeWorker();
+        MAIN.runNext();
+        check(service.finishRetries == 1 && activeJob != null && !running && !SCHEDULER.durable,
+                "declined synchronous schedule retains ownership while framework retry is queued");
+        check(service.onStopJob(new JobParameters()),
+                "stop before queued jobFinished retry still synchronously requests recovery");
+        check(!service.onStopJob(new JobParameters()), "duplicate stop cannot reclaim retired ownership");
+        SCHEDULER.accept = true;
+        service.onStartJob(new JobParameters());
+        completeWorker();
+        MAIN.runNext();
+        check(service.finished == 2 && service.finishRetries == 1 && SCHEDULER.schedules == 0,
+                "fallback recovery of an empty drain does not keep retrying");
+    }
+
+    public static void main(String[] args) {
+        interruptedRecovery();
+        stopBeforeQueuedCompletion();
+        replacementDuringSchedule();
+        stopDuringSchedule();
+        replacementDuringFinish();
+        declinedScheduleRecovery();
+        System.out.println("PASS " + assertions + " job interruption and recovery assertions");
+    }
+}

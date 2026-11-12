@@ -1,0 +1,269 @@
+{
+  "description": "Synthetic producer-shaped Responses output with preserved output-item textSignature; no real-session content; upstream processor inspected but not executed.",
+  "frames": [
+    {
+      "type": "event",
+      "event": {
+        "type": "agent_start"
+      },
+      "sessionState": {
+        "daemonInstanceId": "synthetic-daemon",
+        "revision": 1,
+        "owner": {
+          "kind": "child"
+        },
+        "bindingEpoch": 1,
+        "turn": "running",
+        "confidence": "confirmed",
+        "connection": "connected",
+        "observedAt": 1700000000000,
+        "activity": null,
+        "capabilities": {
+          "read": true,
+          "stream": true,
+          "control": true
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant",
+          "api": "openai-responses",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "timestamp": 1700000000000,
+          "content": [],
+          "stopReason": "stop",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          }
+        }
+      },
+      "sessionState": {
+        "daemonInstanceId": "synthetic-daemon",
+        "revision": 1,
+        "owner": {
+          "kind": "child"
+        },
+        "bindingEpoch": 1,
+        "turn": "running",
+        "confidence": "confirmed",
+        "connection": "connected",
+        "observedAt": 1700000000000,
+        "activity": null,
+        "capabilities": {
+          "read": true,
+          "stream": true,
+          "control": true
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "type": "message_update",
+        "message": {
+          "role": "assistant",
+          "api": "openai-responses",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "timestamp": 1700000000000,
+          "content": [
+            {
+              "type": "text",
+              "text": "The final answer should appear once.",
+              "textSignature": "{\"v\":1,\"id\":\"synthetic-output-item\"}"
+            }
+          ],
+          "stopReason": "stop",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          }
+        }
+      },
+      "sessionState": {
+        "daemonInstanceId": "synthetic-daemon",
+        "revision": 1,
+        "owner": {
+          "kind": "child"
+        },
+        "bindingEpoch": 1,
+        "turn": "running",
+        "confidence": "confirmed",
+        "connection": "connected",
+        "observedAt": 1700000000000,
+        "activity": null,
+        "capabilities": {
+          "read": true,
+          "stream": true,
+          "control": true
+        }
+      }
+    },
+    {
+      "type": "bundle",
+      "history": {
+        "entries": [
+          {
+            "type": "message",
+            "id": "canonical-entry",
+            "timestamp": "2023-11-14T22:13:20.250Z",
+            "message": {
+              "role": "assistant",
+              "api": "openai-responses",
+              "provider": "synthetic-provider",
+              "model": "synthetic-model",
+              "timestamp": 1700000000000,
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The final answer should appear once.",
+                  "textSignature": "{\"v\":1,\"id\":\"synthetic-output-item\"}"
+                }
+              ],
+              "stopReason": "stop",
+              "responseId": "provider-id-arrives-late",
+              "usage": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 0,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              }
+            }
+          }
+        ],
+        "nextBefore": null,
+        "endOffset": 200
+      },
+      "sessionState": {
+        "daemonInstanceId": "synthetic-daemon",
+        "revision": 2,
+        "owner": {
+          "kind": "child"
+        },
+        "bindingEpoch": 1,
+        "turn": "idle",
+        "confidence": "confirmed",
+        "connection": "connected",
+        "observedAt": 1700000000000,
+        "activity": null,
+        "capabilities": {
+          "read": true,
+          "stream": true,
+          "control": true
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant",
+          "api": "openai-responses",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "timestamp": 1700000000000,
+          "content": [
+            {
+              "type": "text",
+              "text": "The final answer should appear once.",
+              "textSignature": "{\"v\":1,\"id\":\"synthetic-output-item\"}"
+            }
+          ],
+          "stopReason": "stop",
+          "responseId": "provider-id-arrives-late",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          }
+        }
+      },
+      "sessionState": {
+        "daemonInstanceId": "synthetic-daemon",
+        "revision": 1,
+        "owner": {
+          "kind": "child"
+        },
+        "bindingEpoch": 1,
+        "turn": "running",
+        "confidence": "confirmed",
+        "connection": "connected",
+        "observedAt": 1700000000000,
+        "activity": null,
+        "capabilities": {
+          "read": true,
+          "stream": true,
+          "control": true
+        }
+      }
+    },
+    {
+      "type": "event",
+      "event": {
+        "type": "agent_end"
+      },
+      "sessionState": {
+        "daemonInstanceId": "synthetic-daemon",
+        "revision": 2,
+        "owner": {
+          "kind": "child"
+        },
+        "bindingEpoch": 1,
+        "turn": "idle",
+        "confidence": "confirmed",
+        "connection": "connected",
+        "observedAt": 1700000000000,
+        "activity": null,
+        "capabilities": {
+          "read": true,
+          "stream": true,
+          "control": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,475 @@
+#!/usr/bin/env python3
+"""android: control the phone hosting this Alpine guest via the omp-pulse Phone API.
+
+Talks to the HTTP server inside the omp-pulse app (address from
+/root/.config/omp-phone/endpoint.json, 127.0.0.1:7690 on older app builds) with the
+bearer token in /root/.config/omp-phone/token. Stdlib only.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+ENDPOINT_FILE = "/root/.config/omp-phone/endpoint.json"
+DEFAULT_URL = "http://127.0.0.1:7690/v1/"  # app builds that predate endpoint.json
+TOKEN_FILE = "/root/.config/omp-phone/token"
+# screenshots/installs can take a few seconds (system UI round trips); 60s is generous
+TIMEOUT = 60
+NO_SERVER = "phone API not running: open omp-pulse on the phone"
+
+
+def endpoint(key, fallback):
+    """KEY from the app's endpoint.json (rewritten on every app start), else FALLBACK (older builds)."""
+    try:
+        with open(ENDPOINT_FILE) as f:
+            value = json.load(f).get(key)
+    except (OSError, ValueError, AttributeError):
+        return fallback
+    return value if isinstance(value, str) and value else fallback
+
+
+def api_url():
+    url = endpoint("phoneApi", DEFAULT_URL)
+    return url if url.endswith("/") else url + "/"
+
+
+def die(msg):
+    print("android: " + msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def call(cmd, **body):
+    import urllib.error
+    import urllib.request
+
+    try:
+        with open(TOKEN_FILE) as f:
+            token = f.read().strip()
+    except OSError:
+        die("token file %s missing. %s" % (TOKEN_FILE, NO_SERVER))
+    req = urllib.request.Request(
+        api_url() + cmd,
+        data=json.dumps(body).encode(),
+        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            raw = r.read()
+    except urllib.error.HTTPError as e:
+        raw = e.read()  # 400/401/500 still carry a JSON {"ok":false,"error":...}
+        if e.code == 401:
+            die("unauthorized (stale token). " + NO_SERVER + " and retry")
+    except (urllib.error.URLError, OSError):
+        die(NO_SERVER)
+    try:
+        return json.loads(raw)
+    except ValueError:
+        die("bad response from phone API: %r" % raw[:200])
+
+
+def absp(p):
+    return os.path.abspath(os.path.expanduser(p))
+
+
+def is_url(s):
+    return "://" in s or s.startswith(("mailto:", "tel:", "geo:", "sms:"))
+
+
+def parse_extra(v):
+    if v in ("true", "false"):
+        return v == "true"
+    for t in (int, float):
+        try:
+            return t(v)
+        except ValueError:
+            pass
+    return v
+
+
+def filter_apps(res, args):
+    flt = (args.filter or "").lower()
+    return {
+        **res,
+        "apps": [
+            app for app in res.get("apps", [])
+            if (args.all or not app.get("system"))
+            and (not flt or flt in app["package"].lower() or flt in app.get("label", "").lower())
+        ],
+    }
+
+
+def show_apps(res, args):
+    for a in res.get("apps", []):
+        print("%s\t%s\t%s%s" % (a["package"], a.get("label", ""), a.get("version", ""), "\t[system]" if a.get("system") else ""))
+
+
+def show_status(res, args):
+    for k in ("storage", "install", "accessibility"):
+        print("%-14s %s" % (k, "granted" if res.get(k) else "OFF"))
+
+
+INSTALLERS = ("com.android.packageinstaller", "com.google.android.packageinstaller",
+              "com.samsung.android.packageinstaller")
+CONFIRM = ("install", "update", "reinstall")
+DONE = ("done", "ok")
+# Security warnings are the user's decision; never click through them.
+WARN = ("play protect", "harmful", "unsafe", "blocked by", "install anyway", "send app for")
+FAIL = ("not installed", "isn't installed", "failed", "conflicts with", "incompatible", "invalid")
+NODE = re.compile(r'(?:desc="(?P<desc>[^"]*)" )?(?:text="(?P<text>[^"]*)" )?(?:id=\S+ )?'
+                  r'\[(?P<l>\d+),(?P<t>\d+)\]\[(?P<r>\d+),(?P<b>\d+)\](?P<flags>.*)$')
+
+
+def installer_window():
+    """(installer window lines or None, phone locked?) from one UI dump."""
+    tree = call("ui_dump").get("tree", "")
+    for win in tree.split("# window ")[1:]:
+        if any(p + ":id/" in win for p in INSTALLERS):
+            return win.splitlines(), False
+    return None, ":id/keyguard" in tree
+
+
+def nodes(lines):
+    for line in lines:
+        m = NODE.search(line.strip())
+        if m:
+            label = (m.group("text") or m.group("desc") or "").strip()
+            cx = (int(m.group("l")) + int(m.group("r"))) // 2
+            cy = (int(m.group("t")) + int(m.group("b"))) // 2
+            yield label, "clickable" in m.group("flags"), cx, cy
+
+
+def front_app():
+    """Package of the top application window (type=1), or None (locked/no app)."""
+    tree = call("ui_dump").get("tree", "")
+    for win in tree.split("# window ")[1:]:
+        if win.split("\n", 1)[0].endswith("type=1"):
+            ids = re.findall(r"\b([a-z][\w.]*):id/", win)
+            ids = [p for p in ids if p != "android"]
+            return max(set(ids), key=ids.count) if ids else None
+    return None
+
+
+def confirm_install(apk, wait):
+    """Open the installer for APK and accept it via accessibility; returns exit code."""
+    if not call("status").get("accessibility"):
+        die("accessibility service is off: cannot confirm; the user must tap Install/Update")
+    res = call("install", path=apk)
+    if not res.get("ok"):
+        die(str(res.get("error", "installer did not open")))
+    started = time.time()
+    deadline, tapped, notified, last_open = started + wait, False, False, started
+    while time.time() < deadline:
+        win, locked = installer_window()
+        if win is None:
+            if tapped:
+                break  # installer closed itself after installing
+            # Android drops installer launches while locked or while another app is in
+            # front (background-activity rule). Ask once, keep re-opening; it lands as
+            # soon as the phone is unlocked with omp-pulse in front.
+            if not notified and (locked or time.time() - started > 8):
+                call("notify", title="Update ready",
+                     text="Unlock and open omp-pulse; omp will tap Update itself.")
+                notified = True
+            if not locked and time.time() - last_open > 10:
+                call("install", path=apk)
+                last_open = time.time()
+            time.sleep(2)
+            continue
+        items = list(nodes(win))
+        texts = " | ".join(t.lower() for t, _, _, _ in items)
+        if any(w in texts for w in WARN):
+            print("android: security warning in installer; the user must decide", file=sys.stderr)
+            return 3
+        if tapped and any(f in texts for f in FAIL):
+            print("android: install failed: " + texts[:200], file=sys.stderr)
+            return 1
+        done = [n for n in items if n[1] and n[0].lower() in DONE]
+        if tapped and (done or "installed" in texts):
+            if done:
+                call("tap", x=done[0][2], y=done[0][3])
+            break
+        go = [n for n in items if n[1] and n[0].lower() in CONFIRM]
+        if go and not tapped:
+            call("tap", x=go[0][2], y=go[0][3])
+            tapped = True
+        time.sleep(1)
+    else:
+        if tapped:
+            print("android: installer did not finish within %ds" % wait, file=sys.stderr)
+        else:
+            print("android: installer never reached the screen within %ds: phone locked or another "
+                  "app in front (notification sent; omp-pulse must be in front)" % wait, file=sys.stderr)
+        return 2
+    if not tapped:
+        print("android: installer closed without confirmation", file=sys.stderr)
+        return 2
+    print("installed (confirmed in installer)")
+    return 0
+
+
+def run(args):
+    c = args.cmd
+    if c == "status":
+        return "status", {}, show_status
+    if c == "install":
+        if args.confirm:
+            sys.exit(confirm_install(absp(args.apk), args.wait))
+        return "install", {"path": absp(args.apk)}, None
+    if c == "uninstall":
+        return "uninstall", {"package": args.package}, None
+    if c == "open":
+        return "open", {"target": args.target if is_url(args.target) else absp(args.target)}, None
+    if c == "share":
+        return "share", {"path": absp(args.path)}, None
+    if c == "launch":
+        return "launch", {"package": args.package}, None
+    if c == "apps":
+        return "apps", {}, show_apps
+    if c == "notify":
+        return "notify", {"title": args.title, "text": args.text}, None
+    if c == "clipboard":
+        if args.action == "get":
+            return "clipboard_get", {}, lambda r, a: print(r.get("text", ""))
+        if args.text is None:
+            die("clipboard set needs the text argument")
+        return "clipboard_set", {"text": args.text}, None
+    if c == "intent":
+        extras = {}
+        for e in args.extra:
+            k, sep, v = e.partition("=")
+            if not sep or not k:
+                die("--extra needs key=value, got %r" % e)
+            extras[k] = parse_extra(v)
+        body = {"action": args.action, "data": args.data, "type": args.type, "package": args.package,
+                "component": args.component, "category": args.category, "extras": extras,
+                "mode": "broadcast" if args.broadcast else "service" if args.service else "activity"}
+        return "intent", {k: v for k, v in body.items() if v not in (None, [], {})}, None
+    if c == "screenshot":
+        if args.only:
+            front = front_app()
+            if front != args.only:
+                die("refusing screenshot: %s is in front, not %s" % (front or "nothing/locked", args.only))
+        path = absp(args.path) if args.path else "/sdcard/Pictures/omp/screenshot-%s.png" % time.strftime("%Y%m%d-%H%M%S")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return "screenshot", {"path": path}, lambda r, a: print(path)
+    # c == "ui"
+    u = args.ui_cmd
+    if u == "dump":
+        return "ui_dump", {}, lambda r, a: print(r.get("tree", ""))
+    if u == "tap":
+        return "tap", {"x": args.x, "y": args.y}, None
+    if u == "tap-text":
+        return "tap_text", {"text": args.text}, None
+    if u == "type":
+        return "type", {"text": args.text}, None
+    if u == "swipe":
+        return "swipe", {"x1": args.x1, "y1": args.y1, "x2": args.x2, "y2": args.y2, "ms": args.ms}, None
+    return "key", {"name": args.name}, None
+
+
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+LINKS = (("/root/.omp/agent/AGENTS.md", "agent/AGENTS.md"), ("/root/.omp/agent/skills", "agent/skills"),
+         ("/root/.omp/agent/.env", "agent/env"), ("/usr/local/bin/android", "bin/android"),
+         # Job broker: the extension routes agents' heavy bash calls, the shims catch scripts.
+         ("/root/.omp/agent/extensions/heavy-jobs.ts", "agent/extensions/heavy-jobs.ts"),
+         ("/usr/local/bin/cargo", "bin/shims/cargo"), ("/usr/local/bin/node", "bin/shims/node"),
+         ("/usr/local/bin/npx", "bin/shims/npx"), ("/usr/local/bin/gradle", "bin/shims/gradle"))
+MCP_CONFIG = "/root/.omp/agent/mcp.json"
+# Written by the app after each harness seed/upgrade (3-way merge of branch `upstream`).
+SEED_STATUS = "/root/.config/omp-phone/harness-seed.json"
+
+
+def setup_vars(script):
+    """NAME=value assignments from a shell script, with $VAR expanded from earlier ones."""
+    found = {}
+    with open(script) as f:
+        for m in re.finditer(r"^([A-Z]+)=(\S+)$", f.read(), re.M):
+            found[m.group(1)] = re.sub(r"\$(\w+)", lambda v: found.get(v.group(1), ""), m.group(2))
+    return found
+
+
+def seed_checks():
+    """(status, check, detail) for the app's last harness seed/upgrade, from SEED_STATUS."""
+    try:
+        with open(SEED_STATUS) as f:
+            seed = json.load(f)
+        if not isinstance(seed, dict):
+            raise ValueError
+    except FileNotFoundError:
+        yield "note", "harness seed", "no seed status yet (written on the next app start)"
+        return
+    except (OSError, ValueError):
+        yield "note", "harness seed", "%s is unreadable; rewritten on the next app start" % SEED_STATUS
+        return
+    state, release = seed.get("state"), seed.get("release") or "unknown release"
+    git = "git -C %s" % REPO
+    if state in ("seeded", "merged"):
+        yield "ok", "harness seed", "%s %s" % (state, release)
+    elif state == "pending":
+        detail = seed.get("detail") or ""
+        yield "fix", "harness seed", ("release %s not merged yet: commit your changes, then `%s merge upstream` "
+                                      "(keep your version on conflicts)%s" % (release, git, ": " + detail if detail else ""))
+    elif state == "conflicts":
+        merge = seed.get("merge") or ""
+        conflicts = [p for p in seed.get("conflicts") or () if isinstance(p, str) and p]
+        yield "ok", "harness seed", "merged %s; your version kept on %d conflicting path(s)" % (release, len(conflicts))
+        for path in conflicts:
+            # 1 = edited since the merge (resolved by hand); 0 = untouched; anything else (no merge
+            # commit, git error) is treated as untouched so the conflict is never silently dropped.
+            edited = bool(merge) and subprocess.run(["git", "-C", REPO, "diff", "--quiet", merge, "HEAD", "--", path],
+                                                    capture_output=True).returncode == 1
+            if edited:
+                yield "ok", path, "edited since the seed merge"
+            else:
+                yield "fix", path, ("kept your version over the new seed: `%s diff HEAD upstream -- %s`, merge by hand, "
+                                    "commit" % (git, path))
+    else:
+        yield "note", "harness seed", "unknown state %r in %s" % (state, SEED_STATUS)
+
+
+def doctor_checks():
+    """Yield (status, check, detail): status ok | fix | note. Read-only."""
+    for link, rel in LINKS:
+        target = os.path.join(REPO, rel)
+        if os.path.realpath(link) == os.path.realpath(target) and os.path.exists(link):
+            yield "ok", link, "-> " + target
+        else:
+            yield "fix", link, "ln -sfn %s %s" % (target, link)
+
+    mcp = os.path.join(REPO, "bin/phone-mcp")
+    try:
+        with open(MCP_CONFIG) as f:
+            servers = json.load(f).get("mcpServers", {})
+        command = (servers.get("phone") or {}).get("command")
+    except (OSError, ValueError, AttributeError):
+        command = None
+    if command == mcp:
+        yield "ok", "phone MCP server", MCP_CONFIG
+    else:
+        yield "fix", "phone MCP server", "register server 'phone' with command %s in %s" % (mcp, MCP_CONFIG)
+    import shutil
+    if not shutil.which("sccache"):
+        yield "fix", "sccache (shared Rust build cache)", "apk add sccache"
+
+    asr = setup_vars(os.path.join(REPO, "bin/asr-setup"))
+    model = os.path.join(asr["STATE"], asr["MODEL"], "encoder.int8.onnx")
+    python = os.path.join(asr["VENV"], "bin/python")
+    rebuild = "run %s/bin/asr-setup (long; background job), then force-stop and reopen omp-pulse" % REPO
+    try:
+        built = subprocess.run([python, "-c", "import sherpa_onnx"], capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        built = False
+    yield ("ok", "dictation runtime", "sherpa_onnx imports") if built else ("fix", "dictation runtime", rebuild)
+    yield ("ok", "dictation model", asr["MODEL"]) if os.path.isfile(model) else ("fix", "dictation model", rebuild)
+
+    yield from seed_checks()
+
+
+def doctor(json_output):
+    checks = list(doctor_checks())
+    if json_output:
+        print(json.dumps([{"status": s, "check": c, "detail": d} for s, c, d in checks]))
+    else:
+        for status, check, detail in checks:
+            print("%-4s %s: %s" % (status.upper(), check, detail))
+    return 1 if any(s == "fix" for s, _, _ in checks) else 0
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="android",
+        description="Control the Android phone running this guest (omp-pulse Phone API). "
+        "ui/screenshot commands and install --confirm need the omp-pulse accessibility service enabled.",
+        epilog="Typical UI loop: ui dump -> ui tap-text/tap -> ui dump (or screenshot) to verify.",
+    )
+    p.add_argument("--json", action="store_true", help="print JSON instead of text (apps filters still apply)")
+    s = p.add_subparsers(dest="cmd", metavar="COMMAND", required=True)
+    s.add_parser("status", help="show which permissions are granted (storage, install, accessibility)")
+    s.add_parser("doctor", help="after an app update: check links, dictation and the harness seed merge (read-only)",
+                 description="Read-only harness health check. Prints OK/FIX/NOTE lines; each FIX says what to run. "
+                 "Exit 1 when something needs fixing. Works without the phone API (run bin/android doctor if "
+                 "/usr/local/bin/android is gone).")
+    x = s.add_parser("install", help="open the system installer for an APK (the user taps Install)")
+    x.add_argument("apk", help="path to the .apk")
+    x.add_argument("--confirm", action="store_true",
+                   help="tap Install/Update in the installer through accessibility. ONLY when the user asked "
+                        "for it: it takes over their screen. Exit 3: security warning, the user decides; "
+                        "2: not confirmed in time")
+    x.add_argument("--wait", type=int, default=900,
+                   help="with --confirm: seconds to wait, incl. for the user to unlock (default 900)")
+    x = s.add_parser("uninstall", help="open the system uninstall prompt (user must confirm)")
+    x.add_argument("package", help="package name, e.g. com.example.app")
+    x = s.add_parser("open", help="open a URL, or a file in the matching phone app")
+    x.add_argument("target", help="URL or file path")
+    x = s.add_parser("share", help="share a file via the system share sheet")
+    x.add_argument("path")
+    x = s.add_parser("launch", help="launch an installed app")
+    x.add_argument("package")
+    x = s.add_parser("apps", help="list installed apps (user apps only unless --all)")
+    x.add_argument("--all", action="store_true", help="include system apps")
+    x.add_argument("filter", nargs="?", help="substring of package or label")
+    x = s.add_parser("notify", help="post a notification on the phone")
+    x.add_argument("title")
+    x.add_argument("text")
+    x = s.add_parser("clipboard", help="read or write the phone clipboard")
+    x.add_argument("action", choices=["get", "set"])
+    x.add_argument("text", nargs="?", help="text for 'set'")
+    x = s.add_parser("screenshot", help="save a PNG screenshot (default /sdcard/Pictures/omp/screenshot-<ts>.png)")
+    x.add_argument("path", nargs="?")
+    x.add_argument("--only", metavar="PACKAGE",
+                   help="refuse unless PACKAGE is the app in front (keeps other apps out of captures)")
+    x = s.add_parser("intent", help="send a raw Android intent (activity by default)")
+    x.add_argument("--action")
+    x.add_argument("--data", help="URI, or a guest file path starting with /")
+    x.add_argument("--type", help="MIME type")
+    x.add_argument("--package")
+    x.add_argument("--component", help="pkg/.Class or pkg/full.Class")
+    x.add_argument("--category", action="append", default=[])
+    x.add_argument("--extra", action="append", default=[], metavar="KEY=VALUE", help="true/false, int, float, else string")
+    m = x.add_mutually_exclusive_group()
+    m.add_argument("--broadcast", action="store_true")
+    m.add_argument("--service", action="store_true")
+    ui = s.add_parser("ui", help="drive the phone UI (needs accessibility service)")
+    us = ui.add_subparsers(dest="ui_cmd", metavar="UI_COMMAND", required=True)
+    us.add_parser("dump", help="print the active window's node tree (text, desc, id, bounds, flags)")
+    x = us.add_parser("tap", help="tap screen coordinates (pixels)")
+    x.add_argument("x", type=int)
+    x.add_argument("y", type=int)
+    x = us.add_parser("tap-text", help="click first node whose text/description contains TEXT (case-insensitive)")
+    x.add_argument("text")
+    x = us.add_parser("type", help="set text of the focused editable field")
+    x.add_argument("text")
+    x = us.add_parser("swipe", help="swipe between two points")
+    for n in ("x1", "y1", "x2", "y2"):
+        x.add_argument(n, type=int)
+    x.add_argument("ms", nargs="?", type=int, default=300, help="duration in ms (default 300)")
+    x = us.add_parser("key", help="press a system key")
+    x.add_argument("name", choices=["back", "home", "recents", "notifications", "quick_settings"])
+    return p
+
+
+def main():
+    args = build_parser().parse_args()
+    if args.cmd == "doctor":
+        sys.exit(doctor(args.json))
+    cmd, body, render = run(args)
+    res = call(cmd, **body)
+    if args.cmd == "apps" and res.get("ok"):
+        res = filter_apps(res, args)
+    if args.json:
+        print(json.dumps(res))
+    elif not res.get("ok"):
+        print("android: " + str(res.get("error", "unknown error")), file=sys.stderr)
+    elif render:
+        render(res, args)
+    else:
+        print(res.get("note") or "ok")
+    sys.exit(0 if res.get("ok") else 1)
+
+
+if __name__ == "__main__":
+    main()

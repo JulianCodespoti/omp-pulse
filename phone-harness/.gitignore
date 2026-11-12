@@ -1,0 +1,30 @@
+# Generated Python and local build output.
+__pycache__/
+node_modules/
+*.py[cod]
+*.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+/build/
+/dist/
+/artifacts/
+
+# Local state belongs outside the repo, never in source.
+/.state/
+/state/
+/.local/
+
+# Defense in depth only: staged changes still require secret review.
+.env
+.env.*
+token
+agent.db
+agent.db-*
+password
+*.keystore
+*.jks
+*.p12
+*.key

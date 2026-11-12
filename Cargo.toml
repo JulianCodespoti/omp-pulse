@@ -1,0 +1,73 @@
+[package]
+name = "omp-pulse"
+version = "0.1.0"
+edition = "2024"
+# The newest rust-version among locked dependencies (sysinfo). CI's msrv job
+# builds on exactly this toolchain, so raise it when a dependency does.
+rust-version = "1.95"
+description = "Drive your desktop Oh My Pi coding sessions from your phone: a single-binary daemon plus installable PWA"
+authors = ["JulianCodespoti"]
+license = "MIT"
+repository = "https://github.com/JulianCodespoti/omp-pulse"
+homepage = "https://juliancodespoti.github.io/omp-pulse/"
+documentation = "https://juliancodespoti.github.io/omp-pulse/docs/"
+readme = "README.md"
+keywords = ["omp", "coding-agent", "remote", "pwa", "daemon"]
+categories = ["command-line-utilities", "development-tools", "web-programming"]
+exclude = ["bench/", "e2e/", "docs/", "target/"]
+
+[lib]
+name = "omp_pulse"
+path = "src/lib.rs"
+
+[[bin]]
+name = "omp-pulse"
+path = "src/bin/omp-pulse/main.rs"
+
+[dependencies]
+aes-gcm = "0.11.0"
+axum = { version = "0.8.9", features = ["ws"] }
+base64 = "0.23.1"
+clap = { version = "4.6.6", features = ["derive"] }
+directories = "6.0.0"
+flate2 = "1.1.9"
+futures-util = "0.3.33"
+hkdf = "0.13.0"
+include_dir = "0.7.4"
+ignore = "0.4"
+libc = "0.2"
+notify = "8.2.0"
+p256 = { version = "0.13", features = ["ecdsa"] }
+portable-pty = "0.9"
+qrcode = "0.14.1"
+rand = "0.10.2"
+regex = "1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+subtle = "2.6.1"
+sysinfo = "0.39.6"
+tokio = { version = "1.53.1", features = ["full"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake", "rustls-tls-native-roots"] }
+toml = "1.1.4"
+toml_edit = "0.25.13"
+tower-http = { version = "0.7.0", features = ["fs", "compression-gzip", "compression-deflate"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+ureq = { version = "3.4.0", default-features = false, features = ["rustls", "json"] }
+
+# Paused-clock tests (`#[tokio::test(start_paused = true)]`) need tokio's
+# test-util feature. Same crate as the runtime dependency; tests only.
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["full", "test-util"] }
+
+# build.rs parses the shared protocol-version.json. serde_json is already a
+# runtime dependency, so this adds no new package to the tree.
+[build-dependencies]
+serde_json = "1.0.151"
+
+# termios is inherently POSIX: term.rs already gates its raw-mode handling with
+# #[cfg(unix)], but the DEPENDENCY has to be gated too or the crate fails to
+# build for Windows before any of our code is even considered.
+[target.'cfg(unix)'.dependencies]
+termios = "0.3"

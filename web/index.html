@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- `interactive-widget=resizes-content` makes Chrome/Android shrink the
+         LAYOUT viewport when the soft keyboard opens, so `100dvh` already
+         excludes it and the JS inset measures ~0. iOS ignores the hint and
+         only shrinks the VISUAL viewport, where the JS inset does the work.
+         One mechanism, correct on both, and never both at once. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <!-- Android font size: opting in scales the root rem by the system
+         setting, so every rem-sized screen follows it. Without it WebView
+         applies its own text zoom/autosizer, which left the session list
+         unscaled. Keep font sizes in rem, not px, or they ignore it. -->
+    <meta name="text-scale" content="scale" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <title>omp-pulse</title>
+    <!-- Dependency-free first paint, replaced by React's first commit.
+         Keep the page/surface-1 colours aligned with styles.css and the browser
+         chrome colour aligned with manifest.webmanifest. Static placeholders
+         are visual only; the loading container supplies accessible meaning. -->
+    <style>
+      html { background: #000000; background: oklch(0 0 0); color-scheme: dark; }
+      body { margin: 0; }
+      .boot { box-sizing: border-box; height: 100dvh; padding: calc(env(safe-area-inset-top) + 8px) 16px 0; }
+      .boot i { display: block; border-radius: 3px; background: oklch(0.248 0 0); }
+      .boot .h { display: flex; align-items: center; gap: 8px; height: 44px; margin-bottom: 12px; }
+      .boot .t { width: 36%; height: 20px; margin-right: auto; }
+      .boot .b { width: 44px; height: 44px; border-radius: 8px; }
+      .boot .s { height: 44px; margin-bottom: 12px; border-radius: 8px; }
+      .boot .r { padding: 12px; }
+      .boot .r i:first-child { width: 60%; height: 14px; margin-bottom: 8px; }
+      .boot .r i:last-child { width: 80%; height: 12px; }
+      /* Dim and Grey lift the page; without these the skeleton flashed black
+         before the app's grey page painted. data-background is set by the
+         script below from the stored appearance. */
+      html[data-background="dim"] { background: #0f0f0f; background: oklch(0.17 0 0); }
+      html[data-background="dim"] .boot i { background: oklch(0.235 0 0); }
+      html[data-background="grey"] { background: #212121; background: oklch(0.248 0 0); }
+      html[data-background="grey"] .boot i { background: oklch(0.295 0 0); }
+    </style>
+    <!-- Synchronous and tiny: applies the stored Background to the skeleton and
+         the status bar colour before first paint. Key and field mirror
+         platform/appearance.ts (APPEARANCE_KEY, `background`); hexes mirror
+         BACKGROUND_THEME_COLOR there. Never throws (private mode, corrupt JSON). -->
+    <script>
+      try {
+        var b = JSON.parse(localStorage.getItem("omp-appearance")).background;
+        if (b === "dim" || b === "grey") {
+          document.documentElement.setAttribute("data-background", b);
+          document.querySelector('meta[name="theme-color"]').setAttribute("content", b === "dim" ? "#0f0f0f" : "#212121");
+        }
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"><div class="boot" aria-busy="true" aria-label="Loading"><div class="h"><i class="t"></i><i class="b"></i><i class="b"></i></div><i class="s"></i><div class="r"><i></i><i></i></div><div class="r"><i></i><i></i></div><div class="r"><i></i><i></i></div><div class="r"><i></i><i></i></div><div class="r"><i></i><i></i></div><div class="r"><i></i><i></i></div><div class="r"><i></i><i></i></div></div></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

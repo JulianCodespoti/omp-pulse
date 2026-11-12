@@ -1,0 +1,157 @@
+package com.omppulse.app;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * What a stopped ("unset") phone may do. TokenStore's scope selection, NativeConfig.serverUrl and
+ * NotifyService's start entry points are the production source, extracted verbatim; the platform
+ * around them is fake. Credentials of both daemons must survive a stop untouched, and nothing may
+ * start the notification listener or store a credential while no daemon is configured.
+ */
+final class ScopeFixture {
+    private static int checks;
+    private static final Map<String, String> PREFS = new HashMap<>();
+    private static final List<String> STARTED = new ArrayList<>();
+    private static boolean backgroundEnabled = true;
+    private static String laptopUrl;
+    private static String sLastError;
+    private static int sLastHttpStatus;
+    private static LocalRuntime.Mode mode = LocalRuntime.Mode.UNSET;
+
+    static final class Context {
+        void startForegroundService(Intent i) { STARTED.add(i.token); }
+        void startService(Intent i) { STARTED.add(i.token); }
+    }
+
+    static final class Intent {
+        String token;
+        Intent(Context ctx, Class<?> service) {}
+        Intent setAction(String action) { return this; }
+        Intent putExtra(String key, String value) { token = value; return this; }
+    }
+
+    static final class Build {
+        static final class VERSION { static int SDK_INT = 34; }
+        static final class VERSION_CODES { static final int O = 26; }
+    }
+
+    static final class Log {
+        static void w(String tag, String message, Throwable error) {}
+    }
+
+    static final class SharedPreferences {
+        Editor edit() { return new Editor(); }
+        String getString(String key, String fallback) {
+            String v = PREFS.get(key);
+            return v == null ? fallback : v;
+        }
+        static final class Editor {
+            Editor putString(String key, String value) { PREFS.put(key, value); return this; }
+            Editor remove(String key) { PREFS.remove(key); return this; }
+            boolean commit() { return true; }
+            void apply() {}
+        }
+    }
+
+    static final class PulseWidget {
+        static void refresh(Context ctx) {}
+    }
+
+    static final class NotificationPreferences {
+        static boolean isBackgroundEnabled(Context ctx) { return backgroundEnabled; }
+    }
+
+    static final class LocalRuntime {
+        enum Mode { UNSET, PHONE, LAPTOP }
+        static LocalRuntime get(Context ctx) { return new LocalRuntime(); }
+        Mode mode() { return mode; }
+        String appUrl() { return "http://127.0.0.1:7681/app/"; }
+    }
+
+    static final class NativeConfig {
+        static String laptopUrl(Context ctx) { return laptopUrl; }
+        // EXACT_SERVER_URL
+    }
+
+    static final class TokenStore {
+        private static final String KEY_TOKEN = "pairing_token";
+        private static final String KEY_LAST_EVENT_ID = "last_event_id";
+        public static final String SCOPE_PHONE = "phone";
+        public static final String SCOPE_LAPTOP = "laptop";
+        private static SharedPreferences prefs(Context ctx) { return new SharedPreferences(); }
+        // EXACT_TOKEN_STORE
+    }
+
+    static final class NotifyService {
+        private static final String ACTION_SET_TOKEN = "set";
+        private static final String EXTRA_TOKEN = "token";
+        private static final String TAG = "fixture";
+        // EXACT_NOTIFY_STARTS
+    }
+
+    private static void check(boolean condition, String what) {
+        checks++;
+        if (!condition) throw new AssertionError(what);
+    }
+
+    private static void stoppedPhoneKeepsCredentialsAndStartsNothing() {
+        Context ctx = new Context();
+        mode = LocalRuntime.Mode.PHONE;
+        laptopUrl = "https://pc.example.ts.net/app/";
+        TokenStore.saveTokenFor(ctx, TokenStore.SCOPE_PHONE, "phone-secret");
+        TokenStore.saveTokenFor(ctx, TokenStore.SCOPE_LAPTOP, "laptop-secret");
+        NotifyService.startIfPaired(ctx);
+        check(STARTED.equals(List.of("phone-secret")), "paired phone mode starts the listener with the phone token: " + STARTED);
+        STARTED.clear();
+
+        // Settings > Stop: setMode('unset') then NotifyService.stop; later the app is reopened or the phone reboots.
+        mode = LocalRuntime.Mode.UNSET;
+        Map<String, String> before = new HashMap<>(PREFS);
+        NotifyService.startIfPaired(ctx);   // OmpShellActivity open, BootReceiver, notification settings
+        NotifyService.startWithToken(ctx, "stale-page"); // a stale WebView calling NotifyBridge.setToken
+        check(STARTED.isEmpty(), "nothing starts while no daemon is configured: " + STARTED);
+        check(TokenStore.getToken(ctx) == null, "no credential is readable without a daemon");
+        TokenStore.saveToken(ctx, "stale-page");
+        TokenStore.clearToken(ctx);
+        TokenStore.saveLastEventId(ctx, "42");
+        check(TokenStore.getLastEventId(ctx) == null, "no stream position without a daemon");
+        check(PREFS.equals(before), "a stopped phone neither stores nor drops any credential: " + PREFS);
+        check("phone-secret".equals(TokenStore.getTokenFor(ctx, TokenStore.SCOPE_PHONE)), "phone token kept");
+        check("laptop-secret".equals(TokenStore.getTokenFor(ctx, TokenStore.SCOPE_LAPTOP)), "computer token kept");
+
+        // Run on this phone: the saved phone credential is back and the listener starts again.
+        mode = LocalRuntime.Mode.PHONE;
+        check("phone-secret".equals(TokenStore.getToken(ctx)), "phone token readable after resume");
+        NotifyService.startIfPaired(ctx);
+        check(STARTED.equals(List.of("phone-secret")), "resume starts the listener again: " + STARTED);
+        STARTED.clear();
+    }
+
+    private static void computerModeNeedsAnAddressAndRespectsBackgroundSwitch() {
+        Context ctx = new Context();
+        PREFS.clear();
+        STARTED.clear();
+        mode = LocalRuntime.Mode.LAPTOP;
+        laptopUrl = null;
+        TokenStore.saveToken(ctx, "laptop-secret");
+        NotifyService.startIfPaired(ctx);
+        check(STARTED.isEmpty(), "computer mode with no address has no daemon to stream from");
+        laptopUrl = "https://pc.example.ts.net/app/";
+        NotifyService.startIfPaired(ctx);
+        check(STARTED.equals(List.of("laptop-secret")), "computer mode with an address starts");
+        STARTED.clear();
+        backgroundEnabled = false;
+        NotifyService.startIfPaired(ctx);
+        check(STARTED.isEmpty(), "background delivery off still starts nothing");
+        backgroundEnabled = true;
+    }
+
+    public static void main(String[] args) {
+        stoppedPhoneKeepsCredentialsAndStartsNothing();
+        computerModeNeedsAnAddressAndRespectsBackgroundSwitch();
+        System.out.println("ScopeFixture ok (" + checks + " checks)");
+    }
+}

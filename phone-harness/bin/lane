@@ -1,0 +1,531 @@
+#!/usr/bin/env python3
+"""Shell lane: run output-only checks (cargo test/check/clippy, node --test, tsc --noEmit) as the
+Android shell user. Some phones confine an app's processes to a few cores (e.g. Samsung's /moderate
+cpuset) while the shell may use all of them; on a reference phone with 4 cores for the app and 8 for
+the shell this measured 2.37x on a CPU-bound burn test. `lane --help` prints the counts here.
+
+The shell cannot read omp-pulse's private files, so the lane keeps its own copy in
+/data/local/tmp/omp-lane: the toolchain (/usr, /lib, /etc, ~/.cargo; once, then only changes) and
+each project's git tree (synced before every run; target/ and .git are not copied, build output
+stays in the lane). Jobs run under omp-pulse's own proot with the same paths as here.
+Lane jobs set their OOM score to 1000, so under memory pressure Android stops them before any app.
+Everything stays on this phone; nothing is sent anywhere.
+
+  lane setup                     copy/refresh the toolchain (first time ~2 GB, about a minute)
+  lane status                    shell, toolchain, disk, synced projects
+  lane run [--cwd DIR] -- CMD    sync DIR's git tree, run CMD (one shell line or argv) in the lane;
+                                 runs it here instead when the lane is unavailable
+  lane clean [DIR|--all]         drop a project's lane copy (with its build cache), or everything
+
+bin/heavy sends eligible jobs here automatically (rules with "lane": true, side-effect free lines);
+HEAVY_LANE=off keeps them local. Needs the shell tier (`shell-tier connect`, which needs Wireless debugging on).
+"""
+import fcntl
+import hashlib
+import io
+import json
+import os
+import re
+import shlex
+import signal
+import subprocess
+import sys
+import tarfile
+import threading
+import time
+import uuid
+
+SERIAL = "127.0.0.1:5555"
+ENDPOINT_FILE = "/root/.config/omp-phone/endpoint.json"
+DEFAULT_PACKAGE = "com.omppulse.app"  # app builds whose endpoint.json lacks "package"
+REMOTE = "/data/local/tmp/omp-lane"
+ROOTFS = REMOTE + "/rootfs"
+STATE = os.environ.get("LANE_STATE", "/root/.local/state/omp-lane")
+HEAVY_STATE = os.environ.get("HEAVY_STATE", "/root/.local/state/heavy")
+TOOLCHAIN = ["/bin", "/sbin", "/lib", "/etc", "/usr", "/root/.cargo"]
+TOOLCHAIN_SKIP = {"/usr/local", "/usr/lib/jvm", "/usr/share/doc", "/usr/share/man", "/usr/share/info",
+                  "/usr/share/locale", "/usr/share/icons", "/usr/share/fonts", "/usr/share/gtk-doc", "/etc/ssh"}
+PROJECT_SKIP_NAMES = {"target", ".git"}
+STD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV_PASS = re.compile(r"^(CARGO_\w+|RUST\w*|NODE_\w+|NPM_CONFIG_\w+|CI|FORCE_COLOR|NO_COLOR|TZ|TERM|HEAVY_JOB_ID|"
+                      r"RUST_BACKTRACE|RUST_LOG|COLUMNS)$")
+ENV_DROP = re.compile(r"TOKEN|SECRET|PASS|KEY|AUTH|RUSTC_WRAPPER")
+MIN_FREE_MB = 5000      # never fill the phone: below this, run locally
+EVICT_BELOW_MB = 8000   # drop least recently used project copies to stay above this
+INLINE_MAX = 64 << 20   # files up to this size are read whole, so a concurrent edit cannot corrupt the stream
+
+
+def eprint(msg):
+    print(f"lane: {msg}", file=sys.stderr, flush=True)
+
+
+def adb(cmd, timeout=60, **kw):
+    try:
+        return subprocess.run(["adb", "-s", SERIAL, "shell", "-T", cmd], capture_output=True, text=True,
+                              timeout=timeout, **kw)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, 124, "", "timeout")
+    except OSError as e:  # adb not installed (apk add android-tools)
+        return subprocess.CompletedProcess(cmd, 127, "", str(e))
+
+
+def shell_ok():
+    r = adb("id -u", timeout=10)
+    if r.returncode == 127:
+        return False
+    if r.returncode != 0:
+        subprocess.run(["adb", "connect", SERIAL], capture_output=True, timeout=10)
+        r = adb("id -u", timeout=10)
+    return r.returncode == 0 and r.stdout.strip() == "2000"
+
+
+def endpoint(key, fallback=None):
+    """KEY from the app's endpoint.json (rewritten on every app start), else FALLBACK (older builds)."""
+    try:
+        with open(ENDPOINT_FILE) as f:
+            value = json.load(f).get(key)
+    except (OSError, ValueError, AttributeError):
+        return fallback
+    return value if isinstance(value, str) and value else fallback
+
+
+def proot_dir():
+    """omp-pulse's native library dir (holds libproot.so); moves on every app update."""
+    known = endpoint("nativeLibraryDir")
+    if known:
+        return known
+    r = adb("pm path %s" % endpoint("package", DEFAULT_PACKAGE), timeout=15)
+    m = re.search(r"package:(\S+)/base\.apk", r.stdout)
+    return m.group(1) + "/lib/arm64" if m else None
+
+
+def app_cores():
+    """Cores this app's processes may run on (its cpuset: Cpus_allowed_list)."""
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except OSError:
+        return os.cpu_count() or 1
+
+
+def lane_cores():
+    """Cores the shell user sees (`nproc` over adb), or None without a shell."""
+    r = adb("nproc", timeout=10)
+    out = r.stdout.strip()
+    return int(out) if r.returncode == 0 and out.isdigit() else None
+
+
+def free_mb():
+    r = adb(f"df -k {REMOTE}", timeout=15)
+    try:
+        return int(r.stdout.strip().splitlines()[-1].split()[3]) // 1024
+    except (IndexError, ValueError):
+        return 0
+
+
+# ---------------------------------------------------------------- state
+
+def state_path(*parts):
+    path = os.path.join(STATE, *parts)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
+
+
+def load(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def save(path, obj):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+
+class Locked:
+    """Serialises syncs of one tree between concurrent lane runs (not the jobs themselves)."""
+
+    def __init__(self, name):
+        self.f = open(state_path("locks", name + ".lock"), "w")
+
+    def __enter__(self):
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
+
+
+# ---------------------------------------------------------------- sync
+
+NM_MARKERS = (".package-lock.json", ".modules.yaml", ".yarn-state.yml")  # rewritten on every install
+
+
+def nm_stamp(path):
+    for marker in NM_MARKERS:
+        try:
+            st = os.stat(os.path.join(path, marker))
+            return [marker, st.st_size, st.st_mtime_ns, os.stat(path).st_mtime_ns]
+        except OSError:
+            continue
+    return None
+
+
+def scan(roots, skip_paths=(), skip_names=(), old=None):
+    """{absolute path: [kind, size, mtime_ns, mode]} for regular files, symlinks and directories.
+
+    A node_modules tree whose install marker is unchanged since OLD is taken from OLD instead of
+    walked (tens of thousands of stats). Marker stamps live under "<dir>\\0nm" keys."""
+    old = old or {}
+    out = {}
+    for root in roots:
+        if not os.path.lexists(root):
+            continue
+        st = os.lstat(root)
+        out[root] = ["d", 0, 0, st.st_mode & 0o7777]
+        for dirpath, dirs, files in os.walk(root):
+            keep = []
+            for d in dirs:
+                p = os.path.join(dirpath, d)
+                if p in skip_paths or d in skip_names:
+                    continue
+                try:
+                    st = os.lstat(p)
+                except OSError:
+                    continue
+                if os.path.islink(p):
+                    out[p] = ["l", 0, st.st_mtime_ns, 0o777]
+                    continue
+                out[p] = ["d", 0, 0, st.st_mode & 0o7777]
+                if d == "node_modules":
+                    stamp = nm_stamp(p)
+                    if stamp:
+                        out[p + "\0nm"] = stamp
+                        if old.get(p + "\0nm") == stamp:
+                            prefix = p + "/"
+                            out.update((k, v) for k, v in old.items() if k.startswith(prefix))
+                            continue
+                keep.append(d)
+            dirs[:] = keep
+            for name in files:
+                p = os.path.join(dirpath, name)
+                if p in skip_paths or name in skip_names:
+                    continue
+                try:
+                    st = os.lstat(p)
+                except OSError:
+                    continue
+                if os.path.islink(p):
+                    out[p] = ["l", 0, st.st_mtime_ns, 0o777]
+                elif os.path.isfile(p):
+                    out[p] = ["f", st.st_size, st.st_mtime_ns, st.st_mode & 0o7777]
+    return out
+
+
+def diff(old, new):
+    changed = [p for p, meta in new.items() if "\0" not in p and old.get(p) != meta]
+    removed = [p for p in old if "\0" not in p and p not in new]
+    return sorted(changed), sorted(removed)
+
+
+def push(changed, removed, new):
+    """Apply a diff to the lane rootfs. Returns the manifest entries that really arrived (others retry next time)."""
+    if removed:
+        # Deepest first; relative to the rootfs, so nothing outside it can be touched.
+        listing = "\0".join(p.lstrip("/") for p in sorted(removed, key=len, reverse=True)) + "\0"
+        r = subprocess.run(["adb", "-s", SERIAL, "shell", "-T", f"cd {ROOTFS} && xargs -0 rm -rf --"],
+                           input=listing.encode(), capture_output=True, timeout=300)
+        if r.returncode != 0:
+            raise RuntimeError("remove failed: " + r.stderr.decode(errors="replace")[:200])
+    if not changed:
+        return new
+    p = subprocess.Popen(["adb", "-s", SERIAL, "shell", "-T", f"mkdir -p {ROOTFS} && cd {ROOTFS} && tar xf -"],
+                         stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    skipped = set()
+    err = []
+    reader = threading.Thread(target=lambda: err.append(p.stderr.read()), daemon=True)
+    reader.start()
+    try:
+        with tarfile.open(fileobj=p.stdin, mode="w|", format=tarfile.GNU_FORMAT) as tf:
+            for path in changed:
+                kind = new[path][0]
+                try:
+                    tf.inodes = {}  # never emit hard links: their targets may not be in this batch
+                    ti = tf.gettarinfo(path, path.lstrip("/"))
+                    ti.uid = ti.gid = 0
+                    ti.uname = ti.gname = "root"
+                    if kind == "d":
+                        ti.mode |= 0o700
+                        tf.addfile(ti)
+                    elif kind == "l":
+                        tf.addfile(ti)
+                    elif ti.size <= INLINE_MAX:
+                        with open(path, "rb") as f:
+                            data = f.read()
+                        ti.type, ti.size = tarfile.REGTYPE, len(data)
+                        tf.addfile(ti, io.BytesIO(data))
+                    else:
+                        ti.type = tarfile.REGTYPE
+                        with open(path, "rb") as f:
+                            tf.addfile(ti, f)
+                except (FileNotFoundError, PermissionError):
+                    skipped.add(path)
+    finally:
+        try:
+            p.stdin.close()
+        except OSError:
+            pass
+        p.wait()
+        reader.join(timeout=10)
+    if p.returncode != 0:
+        raise RuntimeError("copy failed: " + b"".join(err).decode(errors="replace")[:300])
+    return {k: v for k, v in new.items() if k not in skipped}
+
+
+def sync(name, roots, skip_paths=(), skip_names=(), label=None):
+    path = state_path("manifests", name + ".json")
+    with Locked(name):
+        old = load(path, {})
+        new = scan(roots, set(skip_paths), set(skip_names), old)
+        changed, removed = diff(old, new)
+        if changed or removed:
+            size = sum(new[p][1] for p in changed) >> 20
+            if size >= 50 or len(changed) >= 2000:
+                eprint(f"copying {len(changed)} files ({size} MB) of {label or name}")
+            save(path, push(changed, removed, new))
+        return len(changed), len(removed)
+
+
+def toolchain_stamp():
+    parts = []
+    for p in ["/lib/apk/db/installed", "/root/.cargo/registry/cache", "/root/.cargo/registry/index", "/root/.cargo/bin"]:
+        try:
+            parts.append(str(os.stat(p).st_mtime_ns))
+            if os.path.isdir(p):
+                parts += [str(e.stat().st_mtime_ns) for e in os.scandir(p) if e.is_dir()]
+        except OSError:
+            parts.append("-")
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+
+def setup(force=False):
+    info = load(state_path("lane.json"), {})
+    stamp = toolchain_stamp()
+    if not force and info.get("toolchain") == stamp:
+        return True
+    t0 = time.time()
+    with Locked("setup"):
+        info = load(state_path("lane.json"), {})
+        if force or info.get("toolchain") != stamp:
+            adb(f"mkdir -p {ROOTFS}/proc {ROOTFS}/dev {ROOTFS}/sys {ROOTFS}/sdcard {ROOTFS}/tmp {ROOTFS}/root/projects "
+                f"{REMOTE}/tmp {REMOTE}/jobs && chmod 1777 {ROOTFS}/tmp")
+            changed, removed = sync("toolchain", TOOLCHAIN, TOOLCHAIN_SKIP, label="the toolchain")
+            info.update(toolchain=stamp, synced_at=time.time())
+            save(state_path("lane.json"), info)
+            if changed or removed:
+                eprint(f"toolchain ready: {changed} copied, {removed} removed in {time.time() - t0:.0f}s")
+    return True
+
+
+def is_set_up():
+    return bool(load(state_path("lane.json"), {}).get("toolchain"))
+
+
+def git_root(cwd):
+    r = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def project_key(root):
+    return "project-" + hashlib.sha256(root.encode()).hexdigest()[:12]
+
+
+def evict(keep):
+    """Drop least recently used project copies while free space is low."""
+    projects = load(state_path("projects.json"), {})
+    for root, used in sorted(projects.items(), key=lambda kv: kv[1]):
+        if free_mb() >= EVICT_BELOW_MB:
+            return
+        if root == keep:
+            continue
+        eprint(f"low space on the phone: dropping the lane copy of {root}")
+        clean_project(root)
+
+
+def clean_project(root):
+    adb(f"rm -rf {ROOTFS}{shlex.quote(root)}", timeout=300)
+    try:
+        os.remove(state_path("manifests", project_key(root) + ".json"))
+    except OSError:
+        pass
+    projects = load(state_path("projects.json"), {})
+    projects.pop(root, None)
+    save(state_path("projects.json"), projects)
+
+
+# ---------------------------------------------------------------- run
+
+def lane_env():
+    env = {"HOME": "/root", "USER": "root", "SHELL": "/bin/sh", "PATH": STD_PATH, "LANG": "C.UTF-8",
+           "TMPDIR": "/tmp", "OMP_LANE": "1"}
+    for k, v in os.environ.items():
+        if ENV_PASS.match(k) and not ENV_DROP.search(k):
+            env[k] = v
+    return env
+
+
+def remote_mb(pgid):
+    """Resident memory of the remote job's process group, MB."""
+    r = adb("ps -A -o PGID=,RSS=", timeout=10)
+    total = 0
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == str(pgid) and parts[1].isdigit():
+            total += int(parts[1])
+    return total // 1024
+
+
+def run_local(text, cwd, why):
+    eprint(f"{why}; running here instead")
+    env = dict(os.environ, HEAVY_JOB_ID=os.environ.get("HEAVY_JOB_ID") or "direct")
+    return subprocess.run(["sh", "-c", text], cwd=cwd, env=env).returncode
+
+
+def run(text, cwd):
+    root = git_root(cwd)
+    if not root or not root.startswith("/root/"):
+        return run_local(text, cwd, "not inside a git tree under /root")
+    if not is_set_up():
+        return run_local(text, cwd, "lane not set up (`lane setup`)")
+    if not shell_ok():
+        return run_local(text, cwd, "no shell (after a reboot: Wireless debugging on, then `shell-tier connect`)")
+    lib = proot_dir()
+    if not lib:
+        return run_local(text, cwd, "omp-pulse's proot not found")
+    try:
+        setup()
+        projects = load(state_path("projects.json"), {})
+        if root not in projects:
+            evict(root)
+            if free_mb() < MIN_FREE_MB:
+                return run_local(text, cwd, f"under {MIN_FREE_MB // 1000} GB free on the phone")
+        t0 = time.time()
+        sync(project_key(root), [root], skip_names=PROJECT_SKIP_NAMES, label=root)
+        projects = load(state_path("projects.json"), {})
+        projects[root] = time.time()
+        save(state_path("projects.json"), projects)
+        synced = time.time() - t0
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+        return run_local(text, cwd, f"sync failed ({e})")
+    jid = uuid.uuid4().hex[:12]
+    pidfile = f"{REMOTE}/jobs/{jid}.pid"
+    envs = " ".join(shlex.quote(f"{k}={v}") for k, v in lane_env().items())
+    remote = (f"echo 1000 > /proc/self/oom_score_adj; echo $$ > {pidfile}; "
+              f"LD_LIBRARY_PATH={lib} PROOT_TMP_DIR={REMOTE}/tmp PROOT_LOADER={lib}/libproot-loader.so "
+              f"exec {lib}/libproot.so --kill-on-exit --link2symlink -0 -r {ROOTFS} -b /dev -b /proc -b /sys "
+              f"-b /storage/emulated/0:/sdcard -w {shlex.quote(cwd)} /usr/bin/env -i {envs} /bin/sh -c {shlex.quote(text)}")
+    eprint(f"running in the shell lane on {lane_cores() or '?'} cores, {app_cores()} here "
+           f"(synced in {synced:.1f}s; HEAVY_LANE=off runs it here)")
+    p = subprocess.Popen(["adb", "-s", SERIAL, "shell", "-T", remote], stdin=subprocess.DEVNULL)
+    stopping = []
+
+    def stop(sig, _frame):
+        stopping.append(sig)
+        adb(f"kill -TERM -- -$(cat {pidfile})", timeout=10)
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            adb(f"kill -KILL -- -$(cat {pidfile})", timeout=10)
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, stop)
+    heavy_job = os.environ.get("HEAVY_JOB_ID")
+    mem_file = os.path.join(HEAVY_STATE, "lane", f"{heavy_job}.mb") if heavy_job and heavy_job != "direct" else None
+    pgid = None
+    while p.poll() is None:
+        time.sleep(3)
+        if p.poll() is not None or not mem_file:
+            continue
+        if pgid is None:
+            got = adb(f"cat {pidfile}", timeout=10).stdout.strip()
+            pgid = int(got) if got.isdigit() else None
+        if pgid:
+            mb = remote_mb(pgid)
+            os.makedirs(os.path.dirname(mem_file), exist_ok=True)
+            with open(mem_file + ".tmp", "w") as f:
+                f.write(str(mb))
+            os.replace(mem_file + ".tmp", mem_file)
+    adb(f"rm -f {pidfile}", timeout=10)
+    if stopping:
+        return 128 + stopping[0]
+    return p.returncode
+
+
+# ---------------------------------------------------------------- commands
+
+def status():
+    info = load(state_path("lane.json"), {})
+    projects = load(state_path("projects.json"), {})
+    ok = shell_ok()
+    out = {"shell": ok, "toolchain": bool(info.get("toolchain")),
+           "toolchain_current": info.get("toolchain") == toolchain_stamp(),
+           "free_mb": free_mb() if ok else None,
+           "cores": {"app": app_cores(), "lane": lane_cores() if ok else None},
+           "projects": {root: time.strftime("%Y-%m-%d %H:%M", time.localtime(t)) for root, t in projects.items()}}
+    if ok:
+        out["lane_mb"] = int((adb(f"du -sm {REMOTE} 2>/dev/null", timeout=300).stdout.split() or ["0"])[0])
+    print(json.dumps(out, indent=1))
+    return 0 if ok and out["toolchain"] else 4
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        lane = lane_cores() if shell_ok() else None
+        print(__doc__.strip() + f"\n\nThis phone: the app may use {app_cores()} cores; the shell lane "
+              + (f"{lane}." if lane else "unknown (no shell: `shell-tier connect`)."))
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "setup":
+        if not shell_ok():
+            eprint("no shell: turn on Wireless debugging, then run `shell-tier connect`")
+            return 4
+        return 0 if setup(force=True) else 1
+    if cmd == "status":
+        return status()
+    if cmd == "run":
+        cwd = os.getcwd()
+        if rest[:1] == ["--cwd"] and len(rest) >= 2:
+            cwd, rest = os.path.abspath(rest[1]), rest[2:]
+        if rest[:1] == ["--"]:
+            rest = rest[1:]
+        if not rest:
+            eprint("usage: lane run [--cwd DIR] -- CMD")
+            return 2
+        text = rest[0] if len(rest) == 1 else shlex.join(rest)
+        return run(text, cwd)
+    if cmd == "clean":
+        if rest == ["--all"]:
+            adb(f"rm -rf {REMOTE}", timeout=600)
+            for name in ("lane.json", "projects.json"):
+                try:
+                    os.remove(state_path(name))
+                except OSError:
+                    pass
+            subprocess.run(["rm", "-rf", os.path.join(STATE, "manifests")])
+            return 0
+        root = git_root(os.path.abspath(rest[0]) if rest else os.getcwd())
+        if not root:
+            eprint("not a git tree")
+            return 2
+        clean_project(root)
+        return 0
+    eprint(f"unknown command {cmd}")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

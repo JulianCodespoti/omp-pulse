@@ -1,0 +1,15 @@
+#!/bin/sh
+# phone-harness shim (linked as /usr/local/bin/npx): typecheck, bundling and test
+# runners started from scripts go through the machine-wide job broker (bin/heavy),
+# which also lets dev servers (`npx vite`) straight through.
+REAL=/usr/bin/npx
+if [ -z "$HEAVY_JOB_ID" ] && [ "$HEAVY" != off ]; then
+  for a in "$@"; do
+    case "$a" in
+      tsc | vite | vitest | jest | playwright) exec /root/projects/phone-harness/bin/heavy run -- "$REAL" "$@" ;;
+      -*) ;;
+      *) break ;;
+    esac
+  done
+fi
+exec "$REAL" "$@"

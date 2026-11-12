@@ -1,0 +1,9 @@
+# Loaded by omp as ~/.omp/agent/.env (symlink). Only non-secret toolchain fixes here.
+# Node's happy-eyeballs 250 ms attempt timeout fails on slow mobile links (npm ETIMEDOUT while curl works).
+NODE_OPTIONS=--no-network-family-autoselection
+# JDK 21+ aborts at startup here (HotSpot PaX self-check vs Android exec policy); JDK 17 works.
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+# Memory: Android kills the whole app (daemon + every agent) when the phone runs low.
+# 2 parallel rustc/cc jobs instead of one per core. (Node's --test-concurrency is not allowed in NODE_OPTIONS.)
+CARGO_BUILD_JOBS=2
+MAKEFLAGS=-j2

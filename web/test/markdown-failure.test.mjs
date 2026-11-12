@@ -1,0 +1,22 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {resolve} from 'node:path';
+import {bundleDomFixture,createDomFixture,root} from './support/react-dom.mjs';
+const require=createRequire(resolve(root,'web/package.json'));
+const code=await bundleDomFixture(`
+import {createElement as h,Component,act,useState} from ${JSON.stringify(require.resolve('react'))};
+import {createRoot} from ${JSON.stringify(require.resolve('react-dom/client'))};
+import {Markdown} from ${JSON.stringify(resolve(root,'web/src/components/markdown.tsx'))};
+const paths=[],errors=[];
+class AppBoundary extends Component{state={failed:false};static getDerivedStateFromError(){return{failed:true}}render(){return this.state.failed?h('div',{'data-testid':'app-failed'},'Whole app failed'):this.props.children}}
+function App({text}){const[count,setCount]=useState(0);return h(AppBoundary,null,h('input',{id:'draft',defaultValue:'Unsent draft'}),h('button',{id:'control',onClick:()=>setCount(n=>n+1)},'Control '+count),h(Markdown,{onOpenPath:p=>paths.push(p)},text))}
+window.fixture={act,paths,errors,mount(mode,text){window.failureMode=mode;const r=createRoot(document.getElementById('root'),{onCaughtError:e=>errors.push(e.message)});const render=(value=text)=>r.render(h(App,{text:value}));render();return{render,unmount:()=>r.unmount()}}};
+`,[{name:'failing-rich-boundaries',resolveId(id){if(id==='streamdown')return '\0streamdown';if(id==='./code-plugin')return '\0code';return null},load(id){if(id==='\0streamdown')return `import{createElement as h}from ${JSON.stringify(require.resolve('react'))};window.richLoads=(window.richLoads??0)+1;if(window.failureMode==='load')throw new Error('Synthetic rich chunk failure');export function Streamdown({children}){if(window.failureMode==='render')throw new Error('Synthetic rich render failure');return h('div',{'data-testid':'rich-render'},children)}`;if(id==='\0code')return `if(window.failureMode==='plugin')throw new Error('Synthetic code plugin failure');export const code={};`;return null}}]);
+async function fixture(t,mode,text='Readable reply'){const dom=createDomFixture(code),w=dom.window,{act,paths,errors}=w.fixture;w.console.error=()=>{};let r;await act(async()=>{r=w.fixture.mount(mode,text)});t.after(async()=>{try{await act(async()=>r.unmount());assert.deepEqual(dom.blocked,[])}finally{dom.close()}});return{w,act,paths,errors,render:value=>act(async()=>r.render(value))};}
+for(const mode of ['load','render'])test(`${mode} failure preserves reply text and sibling controls`,async t=>{const f=await fixture(t,mode);assert.equal(Boolean(f.w.document.querySelector('[data-testid="app-failed"]')),false);assert.ok(f.w.document.body.textContent.includes('Readable reply'));assert.equal(f.w.document.querySelector('#draft')?.value,'Unsent draft');await f.act(async()=>f.w.document.querySelector('#control').click());assert.equal(f.w.document.querySelector('#control').textContent,'Control 1')});
+test('failed rich loading still displays later streamed text without a request storm',async t=>{const f=await fixture(t,'load','First words');await f.render('First words plus later text');assert.ok(f.w.document.body.textContent.includes('First words plus later text'));assert.equal(f.w.richLoads,1)});
+test('failed rich rendering preserves fenced code bytes',async t=>{const f=await fixture(t,'render','Example\n\n```ts\nconst value = "<literal>";\n```');assert.equal(f.w.document.querySelector('pre code')?.textContent,'const value = "<literal>";');assert.equal(Boolean(f.w.document.querySelector('[data-testid="app-failed"]')),false)});
+test('path actions remain usable in the failed-render fallback',async t=>{const f=await fixture(t,'load','See src/example.ts for details');const chip=f.w.document.querySelector('[data-testid="path-chip"]');assert.ok(chip);await f.act(async()=>chip.click());assert.deepEqual(Array.from(f.paths),['src/example.ts'])});
+test('normal rich rendering remains enabled',async t=>{const f=await fixture(t,'good','Normal content');assert.equal(f.w.document.querySelector('[data-testid="rich-render"]')?.textContent,'Normal content');assert.equal(f.errors.length,0)});
+test('existing code-plugin rejection keeps plain code and the rest of the app',async t=>{const f=await fixture(t,'plugin','```js\nconst x = 1;\n```');assert.equal(f.w.document.querySelector('pre code')?.textContent,'const x = 1;');assert.equal(Boolean(f.w.document.querySelector('[data-testid="app-failed"]')),false)});

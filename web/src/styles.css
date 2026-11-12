@@ -1,0 +1,1442 @@
+@import "tailwindcss";
+/* No katex stylesheet. Maths renders lazily (components/markdown.tsx loads
+   math-plugin.ts only when a message contains maths) as MathML, which needs no
+   CSS; the 19,206-byte stylesheet (9.4% of the shipped CSS) would be
+   render-blocking on every load for output that browsers draw natively. */
+@import "@fontsource-variable/geist-mono/index.css";
+
+@source "../node_modules/streamdown/dist/index.js";
+
+@custom-variant dark (&:is(.dark, .dark *));
+/* Settings → Appearance → Density. main.tsx sets data-density on <html>. */
+@custom-variant compact (&:where([data-density="compact"] *));
+
+@plugin "tailwindcss-animate";
+@plugin "@tailwindcss/typography";
+
+/* Design tokens (redesign contract, 2026-10). Everything a component may
+   reach for is named here; anything not named here is off-system. Every
+   `--text-*` name must also be listed in lib/utils.ts (tailwind-merge). */
+@theme inline {
+ /* Radii: 8 / 12 / 18 / 24 / full, in px so a larger text setting never
+     inflates corners (the composer relied on that). `initial` drops
+     Tailwind's xs/2xl/3xl/4xl so an off-scale radius renders square in
+     review instead of silently shipping a seventh shape. Rounded on purpose:
+     the owner found the 6-16 scale read as square next to ChatGPT. */
+ --radius-*: initial;
+ /* --radius-scale: Settings → Appearance → Corners (set on <html>). */
+ --radius-sm: calc(8px * var(--radius-scale, 1));
+ --radius-md: calc(12px * var(--radius-scale, 1));
+ --radius-lg: calc(18px * var(--radius-scale, 1));
+ --radius-xl: calc(24px * var(--radius-scale, 1));
+ /* Bare `rounded` exists only for Streamdown's compiled classes (inline
+     code, menus); app code names a step. */
+ --radius: calc(8px * var(--radius-scale, 1));
+
+ /* Surfaces: page → surface-1 (cards, composer, sheets) → surface-2
+     (pressed, user bubble, inline code) → surface-3 (secondary button,
+     selected). The old card/muted/secondary/accent/popover aliases are gone. */
+ --color-background: var(--background);
+ --color-surface-1: var(--surface-1);
+ --color-user-bubble: var(--user-bubble);
+ --color-surface-2: var(--surface-2);
+ --color-surface-3: var(--surface-3);
+ --color-foreground: var(--foreground);
+ --color-muted-foreground: var(--muted-foreground);
+ --color-tertiary: var(--tertiary);
+ --color-primary: var(--primary);
+ --color-primary-foreground: var(--primary-foreground);
+ --color-primary-text: var(--primary-text);
+ --color-primary-tint: var(--primary-tint);
+ --color-ring: var(--ring);
+ --color-scrim: var(--scrim);
+ /* Borders: `hairline` is the default (see the base layer); `control` is the
+     3:1 boundary for inputs and toggles only. */
+ --color-hairline: var(--hairline);
+ --color-control: var(--control);
+
+ /* Status family. `text-*` is the readable colour, `bg-*-tint` the same
+     colour at 16%, `bg-dot-*` the louder dot band. `bg-danger` alone is the
+     FILL behind white text: Tailwind resolves `bg-*` from
+     `--background-color-*` before `--color-*`, so `text-danger` stays
+     readable while `bg-danger` keeps 4.5:1 under white. */
+ --color-success: var(--success);
+ --color-warning: var(--warning);
+ --color-warning-foreground: var(--warning-foreground);
+ --color-danger: var(--danger);
+ --color-danger-foreground: var(--danger-foreground);
+ --background-color-danger: var(--danger-fill);
+ --color-running: var(--running);
+ --color-success-tint: var(--success-tint);
+ --color-warning-tint: var(--warning-tint);
+ --color-danger-tint: var(--danger-tint);
+ --color-running-tint: var(--running-tint);
+ --color-dot-success: var(--dot-success);
+ --color-dot-warning: var(--dot-warning);
+ --color-dot-danger: var(--dot-danger);
+ --color-dot-running: var(--dot-running);
+ --color-dot-unread: var(--dot-unread);
+
+ /* VENDOR ONLY. Streamdown's compiled classes (@source above) still say
+     `bg-muted`, `bg-sidebar`, `border-border` and `divide-border` for its
+     code blocks, tables and menus. App code must use the surface/hairline
+     names; these exist so rendered markdown is not left unstyled. */
+ --color-muted: var(--surface-1);
+ --color-sidebar: var(--surface-1);
+ --color-border: var(--hairline);
+
+ /* typography */
+ --font-sans: var(--font-sans);
+ --font-mono: var(--font-mono);
+ /* Type ramp: six roles. meta 13 (secondary lines, counts), ui 15 (controls,
+     rows, sheet titles), body 16 (chat content, inputs: 16 also stops iOS
+     zooming a focused field), title 18 (headers), large-title 28 (one screen
+     hero), code 12 (monospace; `.text-code` also sets the mono family).
+     Raw text-xs/sm/base/lg and text-[Npx] are off-system outside markdown
+     internals. */
+ --text-meta: 0.8125rem;
+ --text-meta--line-height: 1.125rem;
+ --text-ui: 0.9375rem;
+ --text-ui--line-height: 1.25rem;
+ /* ChatGPT's Android type scale (OAIAndroidTypography): body 16/26 with
+    0.32 tracking (0.02em), heading 3 18/26, app heading 28/34. */
+ --text-body: 1rem;
+ /* --leading-scale: Settings → Appearance → Line spacing. */
+ --text-body--line-height: calc(1.625rem * var(--leading-scale, 1));
+ --text-body--letter-spacing: 0.02em;
+ --text-title: 1.125rem;
+ --text-title--line-height: 1.625rem;
+ --text-large-title: 1.75rem;
+ --text-large-title--line-height: 2.125rem;
+ /* --code-scale: Settings → Appearance → Code size (set on <html>). */
+ --text-code: calc(0.75rem * var(--code-scale, 1));
+ --text-code--line-height: calc(1.125rem * var(--code-scale, 1));
+
+ /* Stacking: one ladder. Scrims and side panels share `overlay`; sheets
+     and dialogs sit on them; a toast must outrank an open sheet. */
+ --z-index-base: 0;
+ --z-index-raised: 10;
+ --z-index-sticky: 20;
+ --z-index-overlay: 40;
+ --z-index-sheet: 50;
+ --z-index-toast: 60;
+
+ /* motion */
+ --ease-spring: var(--ease-spring);
+ --ease-smooth: var(--ease-smooth);
+ --ease-sheet: var(--ease-sheet);
+ --ease-panel: var(--ease-panel);
+ --animate-fade-up: fade-up var(--dur-base) var(--ease-spring) both;
+ --animate-fade-in: fade-in var(--dur-base) var(--ease-smooth) both;
+ --animate-pop-in: pop-in var(--dur-base) var(--ease-spring) both;
+}
+
+/* omp-pulse is dark-only — light tokens removed 2026-08-29.
+   The app unconditionally adds `dark` class in main.tsx and is used at
+   all hours on OLED phones; shipping a light palette that can never render
+   is dead weight and invites false “contrast fixes” on invisible tokens.
+   Re-introducing light must be a deliberate project with prefers-color-scheme
+   wiring and must meet the same 4.5:1 AA bar.
+
+   One block for `:root` and `.dark`. They used to be two hand-kept copies of
+   the same ~60 values, which is exactly how a palette drifts.
+
+   2026-09-24 redesign: neutral near-black instead of a blue-tinted grey. The
+   old background (L 0.195, chroma 0.008 at hue 275) read as muddy slate on
+   OLED next to ChatGPT/Claude/Vercel, and every surface inherited the tint.
+   Chroma is now ~0.005: the eye reads it as black with a whisper of cool, and
+   violet is the only real colour on screen, so it means something again.
+
+   2026-10 token reset: four surfaces instead of eight aliases, one generated
+   status family, running moved off brand violet to blue.
+   Contrast (WCAG 2.x, OKLab → sRGB, computed for this palette):
+   - foreground: 17.8 page, 16.3 s1, 14.7 s2, 12.95 s3 (bar ≥ 12.7)
+   - muted-foreground: 7.25 page, 6.6 s1, 6.0 s2, 5.3 s3 (bar ≥ 4.5)
+   - tertiary: 5.8 page, 5.3 s1, 4.75 s2, 4.2 s3 (page/s1/s2 only)
+   - primary-text: 8.6 s1, 6.9 s3; white on primary 4.84; white on danger fill 4.53
+   - control border: 3.65 s1, 3.29 s2 (bar ≥ 3 for inputs/toggles)
+   - status text (L 0.74, 60% of gamut chroma): 7.3-8.1 s1, 5.9-6.4 s3,
+     5.6-6.0 on its own 16% tint over s1
+   - dots (L 0.72, 90% of gamut chroma): 6.7-7.6 s1 */
+:root,
+.dark {
+ /* ChatGPT's dark theme, measured on the owner's phone (Android app
+    1.2026.300) and named by its OAITheme tokens: the conversation is pure
+    black (bg-canvas #000000); the drawer, sheets and cards are bg-primary
+    #212121; the composer and header pills are bg-elevated-primary
+    #303030; a selected row is layer-3 #414141. Text #FFFFFF / #CDCDCD /
+    #AFAFAF (tertiary clears 4.5:1 on every surface, 4.65 on surface-3). */
+ --background: oklch(0 0 0);
+ --surface-1: oklch(0.248 0 0);
+ --surface-2: oklch(0.309 0 0);
+ --surface-3: oklch(0.375 0 0);
+ /* Your message: bg-user-message, 13% white over black (#212121). An
+    accent tints it at the same lightness, as ChatGPT's purple accent draws
+    it #2E0450. */
+ --user-bubble: var(--surface-1);
+ --foreground: oklch(1 0 0);
+ --muted-foreground: oklch(0.848 0 0);
+ --tertiary: oklch(0.754 0 0);
+ /* Accent "ChatGPT" (the default): white primary buttons with near-black
+    ink (interactive-bg-primary / text-inverse), links in its Android link
+    blue #7AB7FF (7.7:1 on the page), focus ring white, and its accent
+    blue #48AAFF for switches and the unread dot. */
+ --primary: oklch(1 0 0);
+ --primary-foreground: oklch(0.159 0 0);
+ --primary-text: oklch(0.767 0.122 253);
+ --primary-tint: oklch(0.718 0.154 248 / 0.16);
+ --ring: oklch(1 0 0);
+ /* The accent as light (live ring, working edge): never text, never a fill. */
+ --accent-glow: oklch(0.718 0.154 248);
+ --switch-on: oklch(0.718 0.154 248);
+ --switch-thumb-on: oklch(1 0 0);
+ /* Transcript spacing multiplier; Compact density lowers it. */
+ --gap-scale: 1;
+ /* One scrim strength behind every sheet, dialog and panel: ChatGPT's
+    bg-scrim, #0D0D0D at 50%. */
+ --scrim: oklch(0.159 0 0 / 0.5);
+ /* A11Y-06: interactive boundaries (inputs, toggles) keep a 3:1 border. The
+     transcript and lists do NOT draw it: rows are identified by their text,
+     not their outline, so they use `hairline` dividers and a press fill. */
+ /* ChatGPT's system separator (#38383B) is ~9% white over its page; kept
+    translucent so it still shows on raised surfaces. */
+ --hairline: oklch(1 0 0 / 0.09);
+ --control: oklch(0.55 0.01 285);
+ /* Generated status family: one lightness and one relative chroma (60% of
+     the sRGB gamut at that hue) for text, so no state shouts louder than
+     another. Running is blue at hue 250, 35° clear of brand violet (285):
+     "working" must never read as "primary action". */
+ /* Success/warning/danger are ChatGPT's: connection-ready green #1AC27D,
+    warning #FF9E6C, error #FF8583, on its status fills below. */
+ --success: oklch(0.719 0.162 158);
+ --warning: oklch(0.788 0.133 47);
+ --danger: oklch(0.752 0.149 22);
+ --running: oklch(0.74 0.084 250);
+ --success-tint: oklch(0.373 0.104 149);
+ --warning-tint: oklch(0.303 0.072 51);
+ --danger-tint: oklch(0.281 0.091 27);
+ --running-tint: oklch(0.74 0.084 250 / 0.16);
+ /* Dots are 6-8px, so they get a louder band: L 0.72 at 90% of gamut. */
+ --dot-success: oklch(0.72 0.16 155);
+ --dot-warning: oklch(0.72 0.137 75);
+ --dot-danger: oklch(0.72 0.157 27);
+ --dot-running: oklch(0.72 0.136 250);
+ --dot-unread: oklch(0.718 0.154 248);
+ /* `--danger-fill` sits behind white text (4.53:1) and cannot be lightened;
+     danger-coloured TEXT uses `--danger`. */
+ --danger-fill: oklch(0.58 0.20 27);
+ --danger-foreground: oklch(0.985 0.004 275);
+ --warning-foreground: oklch(0.20 0.04 75);
+ --shadow-card:
+  inset 0 1px 0 oklch(1 0 0 / 0.035), 0 1px 2px oklch(0 0 0 / 0.3);
+ --shadow-float:
+  0 0 0 1px oklch(1 0 0 / 0.07), 0 24px 56px -12px oklch(0 0 0 / 0.6),
+  0 8px 16px -4px oklch(0 0 0 / 0.35);
+ --shadow-composer:
+  0 0 0 1px oklch(1 0 0 / 0.07), 0 2px 8px -4px oklch(0 0 0 / 0.25);
+ --shadow-composer-focus:
+  0 0 0 1px oklch(1 0 0 / 0.14), 0 2px 8px -4px oklch(0 0 0 / 0.25);
+ /* ChatGPT's Android type styles use the system font (OAIAndroidTypography:
+    systemFont / systemSemiboldFont): Roboto on the phone. */
+ --font-sans: system-ui, Roboto, -apple-system, "Segoe UI", sans-serif;
+ /* DejaVu/Noto Sans Mono after the Geist face: Geist Mono has no arrows
+    (→ ←) or box drawing, and the generic `monospace` on Android fell back to
+    a face without them too, so tool output showed tofu. */
+ --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Code", "Fira Code", "DejaVu Sans Mono", "Noto Sans Mono", monospace;
+ /* Motion: real springs, sampled with linear(). `--ease-spring` overshoots
+     about 7% (pop-ins, presses, chips: the ChatGPT bounce); `--ease-sheet`
+     and `--ease-panel` overshoot about 3% so large surfaces land with a
+     settle rather than a wobble. A spring needs its whole curve to play, so
+     durations are the springs' settle times, not the old 140ms fades.
+     Generated from a damped spring (stiffness 300/damping 22 and 330/27,
+     mass 1). */
+ --ease-spring: linear(0, 0.07, 0.233, 0.428, 0.619, 0.781, 0.906, 0.992, 1.044, 1.069, 1.075, 1.069, 1.057, 1.042, 1.028, 1.016, 1.006, 1, 0.996, 0.995, 0.994, 0.995, 0.996, 0.997, 1);
+ --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+ --ease-sheet: linear(0, 0.044, 0.148, 0.282, 0.423, 0.558, 0.677, 0.777, 0.857, 0.919, 0.964, 0.994, 1.014, 1.025, 1.03, 1.03, 1.028, 1.025, 1.02, 1.016, 1.012, 1.009, 1.006, 1.004, 1);
+ --ease-panel: var(--ease-sheet);
+ --dur-fast: 100ms;
+ --dur-base: 240ms;
+ --dur-slow: 340ms;
+ --dur-panel: 420ms;
+ --dur-spring: 520ms;
+ /* ChatGPT's own motion (Android app 1.2026.300, read from its Valdi UI
+    bundle), copied value for value. Press: DILPressFeedback's spring
+    (stiffness 381.47, damping 34.4, mass 1) sampled with linear(); it
+    settles in ~440ms with 0.3% overshoot. Controls: OAIControlAnimations'
+    Android curve, 0.24s for a control's state and 0.3s for a sliding
+    selection. Disclosure: DisclosureMotion, opacity over 0.24s ease-in-out. */
+ --ease-press: linear(0, 0.054, 0.17, 0.312, 0.453, 0.58, 0.684, 0.771, 0.839, 0.89, 0.928, 0.954, 0.972, 0.985, 0.993, 0.998, 1, 1.002, 1.003, 1.003, 1.002, 1.002, 1.002, 1.001, 1);
+ --dur-press: 440ms;
+ --ease-control: cubic-bezier(0.19, 1, 0.22, 1);
+ --dur-control: 240ms;
+ --dur-selection: 300ms;
+ --dur-disclosure: 240ms;
+}
+
+/* Settings → Appearance → Accent. "chatgpt" is the .dark default above.
+   The coloured accents' hues stay clear of the status family
+   (success 155, warning 75, danger 27, running 250) so an accent never reads
+   as a state. Each set holds the bars above: foreground on --primary ≥ 4.5:1,
+   --primary-text ≥ 4.5:1 on page and surface-1..3 (measured: magenta 4.94 /
+   6.7-9.2, cyan 5.08 / 7.8-10.8, mono 14.4 / 10.5-14.4). `.dark` is also on
+   #root and redeclares the defaults there, so both selectors are needed. */
+/* The original accent: brand violet buttons and links. */
+html[data-accent="violet"],
+html[data-accent="violet"] .dark {
+ /* ChatGPT's purple accent: bubble #2E0450 exactly; its button fill
+    #A05DFF carries white at 3.8:1, so the fill is the nearest same-hue
+    purple that holds 4.5:1 (#914AEC, 4.78). Text purple is its #AD7BF9. */
+ --primary: oklch(0.58 0.23 299);
+ --primary-foreground: oklch(1 0 0);
+ --primary-text: oklch(0.687 0.183 300);
+ --primary-tint: oklch(0.687 0.183 300 / 0.16);
+ --ring: oklch(0.687 0.183 300);
+ --dot-unread: oklch(0.687 0.183 300);
+ --accent-glow: oklch(0.634 0.23 299);
+ /* Relative to surface-1 so a Dim or Grey page keeps the bubble a step up. */
+ --user-bubble: oklch(from var(--surface-1) l 0.123 303);
+ --switch-on: var(--primary);
+ --switch-thumb-on: var(--primary-foreground);
+}
+
+html[data-accent="magenta"],
+html[data-accent="magenta"] .dark {
+ --primary: oklch(0.56 0.2 330);
+ --primary-text: oklch(0.78 0.12 330);
+ --primary-tint: oklch(0.78 0.12 330 / 0.16);
+ --ring: oklch(0.62 0.19 330);
+ --dot-unread: oklch(0.72 0.15 330);
+ --accent-glow: oklch(0.66 0.2 330);
+ --switch-on: var(--primary);
+ --switch-thumb-on: var(--primary-foreground);
+ --user-bubble: oklch(from var(--surface-1) l 0.11 330);
+}
+
+html[data-accent="cyan"],
+html[data-accent="cyan"] .dark {
+ --primary: oklch(0.52 0.085 205);
+ --primary-text: oklch(0.8 0.1 205);
+ --primary-tint: oklch(0.8 0.1 205 / 0.16);
+ --ring: oklch(0.66 0.1 205);
+ --dot-unread: oklch(0.74 0.11 205);
+ --accent-glow: oklch(0.72 0.11 205);
+ --switch-on: var(--primary);
+ --switch-thumb-on: var(--primary-foreground);
+ --user-bubble: oklch(from var(--surface-1) l 0.06 205);
+}
+
+html[data-accent="mono"],
+html[data-accent="mono"] .dark {
+ --primary: oklch(0.9 0.01 285);
+ --primary-foreground: oklch(0.16 0.004 285);
+ --primary-text: oklch(0.9 0.01 285);
+ --primary-tint: oklch(0.9 0.01 285 / 0.12);
+ --ring: oklch(0.8 0.01 285);
+ --dot-unread: oklch(0.85 0.01 285);
+ --accent-glow: oklch(0.85 0.01 285);
+ --switch-on: var(--primary);
+ --switch-thumb-on: var(--primary-foreground);
+}
+
+html[data-density="compact"],
+html[data-density="compact"] .dark {
+ --gap-scale: 0.6;
+}
+
+/* Settings → Appearance → Background. Each keeps the bars in the palette
+   comment above (computed): foreground ≥ 8.8 on every surface,
+   muted-foreground ≥ 5.5, tertiary ≥ 5.1 on page/s1/s2. */
+html[data-background="dim"],
+html[data-background="dim"] .dark {
+ --background: oklch(0.17 0 0);
+ --surface-1: oklch(0.235 0 0);
+ --surface-2: oklch(0.295 0 0);
+ --surface-3: oklch(0.36 0 0);
+}
+html[data-background="grey"],
+html[data-background="grey"] .dark {
+ --background: oklch(0.248 0 0);
+ --surface-1: oklch(0.295 0 0);
+ --surface-2: oklch(0.35 0 0);
+ --surface-3: oklch(0.41 0 0);
+}
+
+/* Settings → Appearance → Contrast: secondary text ≥ 7.1:1 and tertiary
+   ≥ 5.7:1 on every surface; dividers and control edges twice as strong. */
+html[data-contrast="high"],
+html[data-contrast="high"] .dark {
+ --muted-foreground: oklch(0.93 0 0);
+ --tertiary: oklch(0.86 0 0);
+ --hairline: oklch(1 0 0 / 0.18);
+ --control: oklch(0.7 0.01 285);
+}
+
+/* Settings → Appearance → Your messages. `:root` outranks the accent
+   selectors, including the custom accent's stylesheet, which loads later. */
+:root[data-bubble="neutral"],
+:root[data-bubble="neutral"] .dark {
+ --user-bubble: var(--surface-1);
+}
+
+/* Settings → Appearance → Font. Android ships Noto Serif and Droid/Noto
+   Sans Mono, so neither needs a download. */
+html[data-font="serif"],
+html[data-font="serif"] .dark {
+ --font-sans: "Noto Serif", "Source Serif 4", Georgia, serif;
+}
+html[data-font="mono"],
+html[data-font="mono"] .dark {
+ --font-sans: var(--font-mono);
+}
+
+@layer base {
+ * {
+  @apply ring-0;
+ }
+
+ body {
+  font-family: var(--font-sans);
+  font-variant-ligatures: common-ligatures;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
+  @apply bg-background text-foreground;
+ }
+
+ code,
+ kbd,
+ samp,
+ pre {
+  font-family: var(--font-mono);
+  font-feature-settings: "ss01" 1, "cv01" 1;
+  font-variant-ligatures: none;
+ }
+}
+
+@layer base {
+
+ *,
+ ::after,
+ ::before,
+ ::backdrop,
+ ::file-selector-button {
+  /* A bare `border` is a hairline. The 3:1 boundary is opt-in
+     (`border-control`) for inputs and toggles, so a decorative card can no
+     longer shout by forgetting a colour. */
+  border-color: var(--hairline);
+ }
+}
+
+@layer base {
+ /* overflow-x: clip, NOT hidden. `hidden` on either element forces its
+    overflow-y to auto, and with `html, body, #root { height: 100% }` that
+    made BODY the scroll container: window.scrollY stayed 0 forever, so the
+    large-title collapse never fired, scroll restore always landed at the
+    top, and pull-to-refresh's "only at the top" guard was always true.
+    `clip` hides horizontal overflow without creating a scroll container,
+    so the window scrolls again. */
+ body {
+  position: relative;
+  overflow-x: clip;
+ }
+
+ html {
+  overflow-x: clip;
+ }
+
+ h1,
+ h2,
+ h3,
+ h4,
+ h5,
+ h6 {
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+ }
+
+ /* Unitless × --leading-scale (Settings → Appearance → Line spacing). */
+ p {
+  line-height: calc(1.6 * var(--leading-scale, 1));
+ }
+}
+
+/* A11Y-01: focus-visible fallback. The previous rule removed the UA outline on
+   button/select/[role=button]/input/textarea with no guaranteed replacement,
+   so several controls had no visible focus at all (WCAG 2.4.7).
+
+   TEXT FIELDS ARE EXCLUDED ON PURPOSE. Chromium matches :focus-visible on a
+   text input even when focus came from a TAP, and a textarea carries no
+   border-radius of its own here — the rounded pill is its WRAPPER. So an
+   outline drew a hard 2px square inside the composer's rounded pill every
+   time the user started typing, which is what was reported. A text field
+   already signals focus twice over: the caret, and the wrapper's
+   `focus-within` ring. It does not need a third indicator, and on a
+   touch-first surface the third one fires on every tap.
+
+   Buttons, links and role=button keep the fallback: they have no caret, and
+   Chromium does not match :focus-visible on them for touch, so it appears
+   only for the keyboard user it is meant for. */
+/* INVARIANT: every focusable element must show a visible focus indicator.
+   For text fields that indicator is the caret plus the wrapper ring; for
+   everything else it is this outline or the component's own ring. */
+/* Un-layered so it wins over Tailwind's layered `outline-none` utility
+   (un-layered > layered in cascade). Uses !important to beat the utility's
+   2px transparent outline regardless of order. Suppression below also uses
+   !important so intentional rings still win.
+   Programmatic focus targets (tabindex=-1) are skipped: a sheet panel takes
+   initial focus itself, and Chromium matches :focus-visible on an element
+   focused by script after a non-pointer open (long-press, auto-open), which
+   drew a violet frame around the whole sheet. */
+:focus-visible:not(input):not(textarea):not([contenteditable]):not([contenteditable="true"]):not([tabindex="-1"]):not([data-sheet-panel]) {
+ outline: 2px solid var(--ring) !important;
+ outline-offset: 2px !important;
+}
+
+/* Edge-aligned rows explicitly opt into an inset outline so scroll/overflow
+   containers cannot crop it. Match the same exclusions and importance as the
+   fallback above; a layered Tailwind offset utility alone cannot override it. */
+[class~="focus-visible:-outline-offset-2"]:focus-visible:not(input):not(textarea):not([contenteditable]):not([contenteditable="true"]):not([tabindex="-1"]):not([data-sheet-panel]) {
+ outline-offset: -2px !important;
+}
+
+/* Suppress the global fallback where the component's own ring is the
+   indicator. Matches non-zero rings (ring-1/2/3, ring-ring) but not ring-0
+   which means "no ring" and should keep the fallback. This sits after the
+   fallback and also uses !important so it can override it. The :not() excludes
+   InputGroup inner elements that carry both `focus-visible:ring-ring/50` from
+   the base Input and `focus-visible:ring-0` to neutralise it — they must keep
+   the fallback. */
+:is([class*="focus-visible:ring-1"],
+ [class*="focus-visible:ring-2"],
+ [class*="focus-visible:ring-3"],
+ [class*="focus-visible:ring-ring"],
+ /* Arbitrary values, e.g. `focus-visible:ring-[3px]` in the shadcn Item,
+       Badge and ScrollArea primitives. Without this the fallback stacked a
+       second 2px outline outside their own 3px ring, and Item backs every
+       list row in the app, so focusing a session showed a double ring. */
+ [class*="focus-visible:ring-["]):not([class*="focus-visible:ring-0"]):focus-visible {
+ outline: none !important;
+ outline-offset: 0 !important;
+}
+
+
+@utility no-scrollbar {
+ -ms-overflow-style: none;
+ scrollbar-width: none;
+
+ &::-webkit-scrollbar {
+  display: none;
+ }
+}
+
+/* `text-code` is a size AND a family: code is the only thing set in mono. */
+@layer utilities {
+ .text-code {
+  font-family: var(--font-mono);
+ }
+}
+
+/* Conversation prose only: file viewers and command results retain their own
+   scale. Relative heading sizes respect the user's text setting; code and table
+   layout remain owned by the markdown renderer. */
+.chat-prose {
+ max-width: 68ch;
+ line-height: calc(1.65 * var(--leading-scale, 1));
+}
+.chat-prose p {
+ margin-block: 0.8em;
+ line-height: calc(1.65 * var(--leading-scale, 1));
+}
+.chat-prose :is(h1, h2, h3, h4, h5, h6) {
+ margin-block: 1.4em 0.55em;
+ font-weight: 600;
+ line-height: 1.3;
+ letter-spacing: -0.015em;
+}
+.chat-prose h1 { font-size: 1.25em; }
+.chat-prose h2 { font-size: 1.125em; }
+.chat-prose :is(h3, h4, h5, h6) { font-size: 1em; }
+.chat-prose :is(ul, ol) {
+ margin-block: 0.8em;
+ padding-inline-start: 1.4em;
+}
+.chat-prose li {
+ margin-block: 0.35em;
+ padding-inline-start: 0.15em;
+}
+.chat-prose li > p { margin-block: 0.25em; }
+.chat-prose li::marker { color: var(--muted-foreground); }
+.chat-prose :is(strong, [data-streamdown="strong"]) { font-weight: 600; }
+.chat-prose blockquote {
+ margin-block: 1em;
+ border-inline-start: 2px solid var(--surface-3);
+ padding-inline-start: 1em;
+ color: var(--muted-foreground);
+}
+.chat-prose :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote):first-child { margin-top: 0; }
+.chat-prose :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote):last-child { margin-bottom: 0; }
+
+/* Preserve desktop cell layout. Only assistant prose opts into these wrappers. */
+.assistant-table-cell { display: contents; }
+@media (width < 48rem) {
+ .assistant-table-reader table,
+ .assistant-table-reader :is(th, td) {
+  font-size: 0.875rem;
+  line-height: 1.5;
+ }
+ .assistant-table-reader :is(th, td) { white-space: normal; }
+ .assistant-table-reader .assistant-table-cell {
+  /* Inline-block follows the cell's Markdown alignment, even when min-w-full
+     distributes spare table width. Auto width keeps short values compact. */
+  display: inline-block;
+  inline-size: auto;
+  max-inline-size: 24ch;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+ }
+ @supports (container-type: inline-size) and (width: 1cqi) and selector(:has(*)) {
+  /* Live MessageContent is w-fit. Give only table-bearing assistant rows a
+     definite width before containment removes the table's intrinsic width. */
+  .is-assistant > [data-message-box]:has(.assistant-table-reader table) { width: 100%; }
+  .assistant-table-reader .markdown-table-scroll { container-type: inline-size; }
+  .assistant-table-reader .assistant-table-cell {
+   /* The scrollport, including inside a quote/list, owns the query. Subtract
+      both existing px-2.5 paddings; rem/ch remain safe at enlarged text sizes. */
+   max-inline-size: min(24ch, max(0px, calc(100cqi - 1.25rem)));
+  }
+ }
+}
+
+
+/* streamdown renders the code-block copy/download controls itself, at 24px,
+   and exposes no prop to size them. On a phone that is a 24px tap target for
+   the two things you reach for most in a code block. The icon inside stays
+   16px; only the box grows to the 44px floor every other control here meets.
+   Scoped to `.md-body` (set in components/markdown.tsx) so it can never reach
+   a button outside rendered markdown. */
+.md-body .pointer-events-auto>button {
+ min-width: 2.75rem;
+ min-height: 2.75rem;
+ display: inline-flex;
+ align-items: center;
+ justify-content: center;
+}
+
+/* Assistant text only. Keep Streamdown's native highlighter and controls;
+   one shell owns the surface and the bounded body owns both scroll axes.
+   These unlayered resets also outrank the vendor's dark pre background.
+   One code size (12px, `--text-code`) for the body, highlighted or not:
+   the old 13px → 14px swap when Shiki landed made every block jump. */
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) {
+ display: grid;
+ grid-template-columns: minmax(0, 1fr) auto;
+ gap: 0.25rem 0.5rem;
+ min-width: 0;
+ margin-block: 0.75rem;
+ padding: 0.25rem 0.75rem 0.75rem;
+ border: 1px solid var(--hairline);
+ border-radius: var(--radius-lg);
+ background: var(--surface-1);
+}
+/* A 32px header: the language label is metadata, not a toolbar. */
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) > [data-streamdown="code-block-header"] {
+ grid-column: 1;
+ grid-row: 1;
+ min-width: 0;
+ height: auto;
+ min-height: 2rem;
+ font-size: var(--text-meta);
+ overflow-wrap: anywhere;
+}
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) > [data-streamdown="code-block-header"] > span {
+ margin: 0;
+}
+/* Diff fences (components/markdown.tsx) reserve room under the overlaid Copy
+   action in the default layout; this grid gives the action its own column. */
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"])[data-language="diff"] > [data-streamdown="code-block-header"] {
+ padding-inline-end: 0;
+}
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) > .pointer-events-none {
+ grid-column: 2;
+ grid-row: 1;
+ position: static;
+ align-self: start;
+ height: auto;
+ margin: 0;
+}
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) [data-streamdown="code-block-actions"] {
+ padding: 0;
+ border: 0;
+ border-radius: 0;
+ background: transparent;
+ backdrop-filter: none;
+}
+/* Inside the 32px header the actions are drawn at 32px; the transparent
+   `::after` inset keeps the 44px touch target the `.md-body` rule promises. */
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) [data-streamdown="code-block-actions"] > button {
+ position: relative;
+ min-width: 2rem;
+ min-height: 2rem;
+}
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) [data-streamdown="code-block-actions"] > button::after {
+ content: "";
+ position: absolute;
+ inset: -0.375rem;
+}
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) [data-streamdown="code-block-actions"] > button:focus-visible {
+ outline: 2px solid var(--ring);
+ outline-offset: 2px;
+ border-radius: var(--radius-sm);
+}
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) [data-streamdown="code-block-body"] {
+ grid-column: 1 / -1;
+ min-width: 0;
+ padding: 0.5rem 0 0;
+ border: 0;
+ border-radius: 0;
+ background: transparent;
+ overflow: auto;
+ scrollbar-width: thin;
+ overscroll-behavior-x: contain;
+}
+/* Wide content inside the session pager (diffs, tool output, tables) scrolls
+   to its own end and stops: reaching it must not chain into the pager and
+   flip the tab. Fenced code blocks already contain above. */
+[data-session-pager] :is(.overflow-x-auto, .overflow-auto) {
+ overscroll-behavior-x: contain;
+}
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) pre {
+ margin: 0;
+ padding: 0;
+ border: 0;
+ border-radius: 0;
+ background: transparent;
+ overflow: visible;
+ font-family: var(--font-mono);
+ font-size: var(--text-code);
+ line-height: var(--text-code--line-height);
+ white-space: pre;
+ overflow-wrap: normal;
+ word-break: normal;
+ touch-action: auto;
+}
+/* The shared inline-code reset uses important utilities. Stay in that layer
+   and out-rank it only for this fenced reading surface, never token colours. */
+@layer utilities {
+ .assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) pre > code {
+  font-size: var(--text-code) !important;
+  font-weight: 400 !important;
+  line-height: inherit !important;
+  letter-spacing: normal !important;
+ }
+}
+.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) pre > code > span::before {
+ font-size: var(--text-code);
+ color: var(--muted-foreground);
+}
+/* File viewer and editor. Code keeps a readable density when the UI text
+   scale grows: it follows the scale up to a cap, so a 360px screen at 150%
+   still shows about 32 columns instead of a word or two per line. */
+.file-code [data-streamdown="code-block"]:not([data-language="mermaid"]) pre,
+.file-code-editor {
+ font-size: min(0.875rem, 15px);
+}
+/* Viewer overrides of the assistant reader rules above: led by `.file-code`
+   so they are not assistant-reply rules, compounded with
+   `.assistant-code-reader` to outrank them. */
+@layer utilities {
+ .file-code.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) pre > code {
+  font-size: min(0.875rem, 15px) !important;
+ }
+}
+.file-code.assistant-code-reader [data-streamdown="code-block"]:not([data-language="mermaid"]) pre > code > span::before {
+ font-size: min(0.75rem, 13px);
+}
+/* Long lines scroll sideways. While more of a line sits past the right edge,
+   that edge fades out; at the end of the scroll it is crisp again. Without
+   overflow the scroll timeline is inactive and nothing is masked. */
+@supports (animation-timeline: scroll()) {
+ .file-code [data-streamdown="code-block-body"] {
+  animation: file-code-edge linear both;
+  animation-timeline: scroll(self inline);
+ }
+}
+@keyframes file-code-edge {
+ 0%,
+ 98% {
+  mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+ }
+ 100% {
+  mask-image: none;
+ }
+}
+
+
+@keyframes fade-up {
+ from {
+  opacity: 0;
+  transform: translateY(6px);
+ }
+
+ to {
+  opacity: 1;
+  transform: translateY(0);
+ }
+}
+
+@keyframes fade-in {
+ from {
+  opacity: 0;
+ }
+
+ to {
+  opacity: 1;
+ }
+}
+
+@keyframes shimmer {
+ 0% {
+  background-position: -200% 0;
+ }
+
+ 100% {
+  background-position: 200% 0;
+ }
+}
+
+/* Sent bubbles, chips and popovers arriving: a small lift and squeeze that
+   the spring overshoots, so they land with a bounce. */
+@keyframes pop-in {
+ from {
+  opacity: 0;
+  transform: translateY(10px) scale(0.92);
+ }
+
+ to {
+  opacity: 1;
+  transform: none;
+ }
+}
+
+/* The composer's Send arriving: the moment there is something to send, the
+   quiet button grows into the filled accent circle. Scale only, no fade, so
+   the reduced-motion end state is simply the button at rest. */
+@keyframes send-in {
+ from {
+  transform: scale(0.85);
+ }
+
+ to {
+  transform: scale(1);
+ }
+}
+
+/* The workspace dock's indicator rides the pager's own scroll timeline, so
+   it moves on the compositor in lockstep with the finger and the native
+   momentum. Driven from scroll events it lagged whenever the main thread was
+   busy (a page mounting mid-swipe) and then caught up with a flick. The
+   pager names the timeline; the drawer's wrapper scopes it to the dock.
+   Without support, SessionPager places the indicator from scroll events. */
+@supports (animation-timeline: scroll()) {
+ .ws-scope {
+  timeline-scope: --ws-pager;
+ }
+
+ .ws-pager {
+  scroll-timeline: --ws-pager x;
+ }
+
+ .ws-pill {
+  animation: ws-pill linear both;
+  animation-timeline: --ws-pager;
+ }
+}
+
+@keyframes ws-pill {
+ from {
+  translate: 0 0;
+ }
+
+ to {
+  translate: 400% 0;
+ }
+}
+
+@keyframes slide-up {
+ from {
+  opacity: 0;
+  transform: translateY(12px);
+ }
+
+ to {
+  opacity: 1;
+  transform: translateY(0);
+ }
+}
+
+/* Bottom sheets. Referenced by Sheet.tsx and CollabDialog.tsx since the
+   sheet shell was written, but never defined until now: every sheet in the
+   app appeared and vanished in one frame. `--sheet-from` lets a flick-to-
+   dismiss exit from where the finger let go instead of snapping back first. */
+@keyframes sheet-in {
+ from {
+  transform: translate3d(0, 100%, 0);
+ }
+
+ to {
+  transform: translate3d(0, 0, 0);
+ }
+}
+
+@keyframes sheet-out {
+ from {
+  transform: translate3d(0, var(--sheet-from, 0px), 0);
+ }
+
+ to {
+  transform: translate3d(0, 100%, 0);
+ }
+}
+
+@keyframes scrim-in {
+ from {
+  opacity: 0;
+ }
+}
+
+@keyframes scrim-out {
+ to {
+  opacity: 0;
+ }
+}
+
+/* Screen push/pop, driven by the View Transitions API (App.tsx `navigate`).
+   A same-document transition snapshots the old and new screens, so no
+   transform ever lands on a live screen: the old SCREEN_FADE was opacity-only
+   precisely because a transform on the wrapper would become the containing
+   block for the screens' fixed/sticky chrome. `data-nav` on <html> picks the
+   direction; the old page parallaxes a third of the way under a dim, the way
+   a native navigation stack does. */
+@keyframes nav-in-from-right {
+ from {
+  transform: translate3d(100%, 0, 0);
+ }
+}
+
+/* No `filter: brightness()` on the outgoing snapshot: a filter re-rasterises
+   the whole screen every frame, which is the one thing a phone cannot afford
+   during a page change. The parallax and the dim of the incoming screen carry
+   the depth instead. */
+@keyframes nav-out-to-left {
+ to {
+  transform: translate3d(-28%, 0, 0);
+ }
+}
+
+@keyframes nav-in-from-left {
+ from {
+  transform: translate3d(-28%, 0, 0);
+ }
+}
+
+@keyframes nav-out-to-right {
+ to {
+  transform: translate3d(100%, 0, 0);
+ }
+}
+
+::view-transition-group(root) {
+ animation-duration: 240ms;
+ animation-timing-function: var(--ease-settle);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+ animation-duration: 240ms;
+ animation-timing-function: var(--ease-settle);
+ mix-blend-mode: normal;
+}
+
+html[data-nav="push"]::view-transition-old(root) {
+ animation-name: nav-out-to-left;
+}
+
+html[data-nav="push"]::view-transition-new(root) {
+ animation-name: nav-in-from-right;
+ box-shadow: -12px 0 32px oklch(0 0 0 / 0.5);
+}
+
+html[data-nav="pop"]::view-transition-old(root) {
+ animation-name: nav-out-to-right;
+ z-index: 1;
+ box-shadow: -12px 0 32px oklch(0 0 0 / 0.5);
+}
+
+html[data-nav="pop"]::view-transition-new(root) {
+ animation-name: nav-in-from-left;
+}
+
+/* The press response for rows: ChatGPT's Android Pressable ripple. A 12%
+   foreground circle grows from the touch point (0.32s ease-out) and fades
+   on release (0.35s). Not a scale: scaling a full-width row pulled its
+   edges in from the screen sides, which no native list does. Painted as a
+   background-image, so it lightens whatever background-color the element
+   already has. platform/press-feedback.ts sets the touch point, radius and
+   data-ripple; without a pointer (keyboard) nothing draws. */
+@property --ripple-r {
+ syntax: "<length>";
+ inherits: false;
+ initial-value: 0px;
+}
+
+@property --ripple-a {
+ syntax: "<number>";
+ inherits: false;
+ initial-value: 0;
+}
+
+@utility pressable {
+ -webkit-tap-highlight-color: transparent;
+
+ &[data-ripple] {
+  background-image: radial-gradient(
+   circle at var(--press-x) var(--press-y),
+   oklch(from var(--foreground) l c h / calc(0.12 * var(--ripple-a))) var(--ripple-r),
+   transparent var(--ripple-r)
+  );
+  --ripple-r: var(--press-r);
+ }
+
+ &[data-ripple="in"] {
+  --ripple-a: 1;
+  transition: --ripple-r 320ms ease-out;
+ }
+
+ &[data-ripple="out"] {
+  --ripple-a: 0;
+  transition: --ripple-a 350ms ease-out;
+ }
+}
+
+/* The press response for everything else that taps (buttons, chips,
+   transcript rows): ChatGPT's DILPressFeedback, a squeeze to 0.98 on its
+   spring, held at least 120ms so a quick tap still shows (press-feedback.ts
+   sets data-pressed). */
+@utility press-bounce {
+ transition: scale var(--dur-press) var(--ease-press);
+ -webkit-tap-highlight-color: transparent;
+
+ &:active,
+ &[data-pressed] {
+  scale: 0.98;
+ }
+
+ @media (prefers-reduced-motion: reduce) {
+  transition: none;
+
+  &:active,
+  &[data-pressed] {
+   scale: 1;
+  }
+ }
+}
+
+/* Content revealed by a disclosure toggle fades in like ChatGPT's
+   DisclosureMotion: opacity only, 0.24s ease-in-out. */
+@keyframes disclosure-in {
+ from {
+  opacity: 0;
+ }
+}
+
+@utility disclosure {
+ animation: disclosure-in var(--dur-disclosure) ease-in-out both;
+
+ @media (prefers-reduced-motion: reduce) {
+  animation: none;
+ }
+}
+
+/* ChatGPT's ShimmerText: a dip to 35% opacity runs through the label one
+   glyph at a time. Each glyph dips over 0.45s (cubic-bezier(0.4,0,0.2,1)
+   down and up), the wave crosses the label in 1.096s, then rests; one
+   cycle is 1.4s. ShimmerText.tsx staggers the glyph delays. */
+@keyframes shimmer-glyph {
+ 0% {
+  opacity: 1;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+ }
+ 16.07% {
+  opacity: 0.35;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+ }
+ 32.14%,
+ 100% {
+  opacity: 1;
+ }
+}
+
+/* ChatGPT's LoadingDot: one 8px dot breathing between scale 1 and 1.25,
+   0.625s each way, ease-in-out. */
+@keyframes loading-dot {
+ to {
+  scale: 1.25;
+ }
+}
+
+/* RotatingShimmerText: a changed status line crossfades in over 0.18s. */
+@keyframes status-in {
+ from {
+  opacity: 0;
+ }
+}
+
+/* The Sessions bar gains its hairline and a translucent page fill as the
+   list scrolls under it. Scroll-driven, so zero JS and zero main-thread work
+   per frame. */
+@keyframes bar-hairline-reveal {
+ to {
+  border-bottom-color: var(--hairline);
+  background-color: color-mix(in oklch, var(--background) 78%, transparent);
+ }
+}
+
+@supports (animation-timeline: scroll()) {
+ .bar-scrolled {
+  animation: bar-hairline-reveal linear both;
+  animation-timeline: scroll(root);
+  animation-range: 0 48px;
+ }
+
+ /* Scroll-linked, not autonomous motion: it moves only as fast as the
+     finger scrolls, so the reduced-motion rule (and the capture harness)
+     that force every animation-duration to ~0ms must not reach it. A
+     class selector with !important outranks those universal `*` rules. */
+ .bar-scrolled {
+  animation-duration: auto !important;
+ }
+}
+
+@supports not (animation-timeline: scroll()) {
+ .bar-scrolled {
+  background-color: color-mix(in oklch, var(--background) 85%, transparent);
+ }
+}
+
+/* Pull-to-refresh spinner: a ring that fills as you pull, then spins. */
+@keyframes ptr-spin {
+ to {
+  transform: rotate(360deg);
+ }
+}
+
+@layer base {
+ /* Dark-only app: one scrollbar palette. */
+ * {
+  scrollbar-color: oklch(1 0 0 / 0.1) transparent;
+  scrollbar-width: thin;
+ }
+
+ *::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+ }
+
+ *::-webkit-scrollbar-track {
+  background: transparent;
+ }
+
+ *::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 0.1);
+  border-radius: 9999px;
+ }
+
+ *::-webkit-scrollbar-thumb:hover {
+  background: oklch(1 0 0 / 0.2);
+ }
+
+ *::-webkit-scrollbar-corner {
+  background: transparent;
+ }
+}
+
+[data-testid="artifact"] {
+ isolation: isolate;
+}
+
+/* omp-pulse: mobile shell — the app owns a fixed viewport, never the document. */
+@layer base {
+
+ html,
+ body,
+ #root {
+  height: 100%;
+  /* Both axes: a sideways swipe past Chat opens the switcher drawer; a
+     browser must not also take it as history Back. */
+  overscroll-behavior: none;
+ }
+
+ /* Native form controls, autofill, the text caret and selection handles take
+     their palette from `color-scheme`, not from our tokens; without it the
+     WebView drew them for a light page on this dark-only app. */
+ html {
+  color-scheme: dark;
+ }
+
+ /* Android paints a translucent blue slab over anything tappable. Every
+     control here has its own `active:` state, so the slab only doubled up —
+     and it is the single most "web page, not app" tell on a phone. */
+ html {
+  -webkit-tap-highlight-color: transparent;
+ }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+ *,
+ *::before,
+ *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+ }
+}
+
+/* Settings → Appearance → Streaming → Fade in: Streamdown 2.6's animate
+   plugin stamps words with data-sd-animate and leaves the keyframes to its
+   own styles.css, which is not imported (copied from streamdown/styles.css).
+   markdown.tsx already skips the plugin under reduced motion. */
+@keyframes sd-fadeIn {
+ from {
+  opacity: 0;
+ }
+}
+
+[data-sd-animate] {
+ animation: var(--sd-animation, sd-fadeIn) var(--sd-duration, 150ms) var(--sd-easing, ease) var(--sd-delay, 0ms) both;
+}
+
+@keyframes sd-markerIn {
+ from {
+  color: transparent;
+ }
+}
+
+[data-sd-animate-marker]::marker {
+ animation: sd-markerIn var(--sd-marker-duration, 150ms) var(--sd-marker-easing, ease) var(--sd-marker-delay, 0ms) both;
+}
+
+/* Settings → Appearance → Reduce motion: "Always" applies the same rule
+   whatever the system says. JS motion checks use prefersReducedMotion(). */
+html[data-motion="reduce"] *,
+html[data-motion="reduce"] *::before,
+html[data-motion="reduce"] *::after {
+ animation-duration: 0.01ms !important;
+ animation-iteration-count: 1 !important;
+ transition-duration: 0.01ms !important;
+ scroll-behavior: auto !important;
+}
+
+/* The two rules above end every animation after one invisible pass, which
+   froze each Spinner and made a slow load look hung. Under reduced motion a
+   spinner holds still and pulses instead. Longhands, not the `animation`
+   shorthand: the shorthand would reset play-state, and html[data-hidden]
+   must still pause it. */
+@keyframes spinner-pulse {
+ 50% {
+  opacity: 0.35;
+ }
+}
+
+@media (prefers-reduced-motion: reduce) {
+ html [data-slot="spinner"] {
+  animation-name: spinner-pulse !important;
+  animation-duration: 1.6s !important;
+  animation-timing-function: ease-in-out !important;
+  animation-iteration-count: infinite !important;
+ }
+}
+
+html[data-motion="reduce"] [data-slot="spinner"] {
+ animation-name: spinner-pulse !important;
+ animation-duration: 1.6s !important;
+ animation-timing-function: ease-in-out !important;
+ animation-iteration-count: infinite !important;
+}
+
+/* Infinite animations (live ring, header shimmer, ShimmerText, the compact
+   pill, spinners) have no reason to run on a page nobody sees. `data-hidden`
+   is set on <html> by main.tsx on visibilitychange; reduced motion is handled
+   by the rule above, which already ends every animation after one pass. */
+html[data-hidden] *,
+html[data-hidden] *::before,
+html[data-hidden] *::after {
+ animation-play-state: paused !important;
+}
+
+/* Live and attention rings: the one "this is active" language, shared by
+   session rows, the composer and agent rows. A working surface gets a slowly
+   turning accent gradient on its edge plus a faint glow; one that needs the
+   reader gets a still amber edge on a warm wash. Idle surfaces get nothing, so
+   colour on screen always means something is happening.
+   The ring is a ::before masked to a 1.5px border (no layout shift, no
+   border-colour fight with the element's own border) and follows the host's
+   border-radius. Reduced motion freezes the turn; the ring stays. */
+@property --ring-angle {
+ syntax: "<angle>";
+ inherits: false;
+ initial-value: 0deg;
+}
+
+@keyframes ring-turn {
+ to {
+  --ring-angle: 360deg;
+ }
+}
+
+@utility live-ring {
+ position: relative;
+ isolation: isolate;
+ /* The wash is an inset shadow, not a background-color: a host with its own
+    fill (the composer's surface-1) keeps it, and the wash tints over it.
+    No outer glow: one accent, drawn once, by the turning ring. */
+ box-shadow: inset 0 0 0 100vmax color-mix(in oklch, var(--accent-glow) 6%, transparent);
+
+ &::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+   from var(--ring-angle),
+   var(--accent-glow),
+   color-mix(in oklch, var(--accent-glow) 15%, transparent) 45%,
+   color-mix(in oklch, var(--accent-glow) 15%, transparent) 60%,
+   var(--accent-glow)
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: ring-turn 3.2s linear infinite;
+  pointer-events: none;
+ }
+}
+
+@utility attention-ring {
+ position: relative;
+ isolation: isolate;
+ box-shadow: inset 0 0 0 100vmax oklch(0.74 0.094 75 / 0.07);
+
+ &::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: oklch(0.74 0.12 75 / 0.75);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
+ }
+}
+
+/* Composer scrim: opaque page colour, its top 40px an eased (smoothstep) fade in,
+   so text scrolling under the composer and its pills is hidden, not crossed. */
+.composer-scrim {
+ background-color: var(--background);
+ mask-image: linear-gradient(to bottom, transparent, rgb(0 0 0 / 0.043), rgb(0 0 0 / 0.156), rgb(0 0 0 / 0.316), rgb(0 0 0 / 0.5), rgb(0 0 0 / 0.684), rgb(0 0 0 / 0.844), rgb(0 0 0 / 0.957), #000), linear-gradient(#000 0 0);
+ mask-size: 100% 40px, 100% calc(100% - 40px);
+ mask-position: top, bottom;
+ mask-repeat: no-repeat;
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+ .composer-scrim { display: none; }
+}
+
+/* The session header's working edge: an accent highlight sweeping left to
+   right along a faint accent line, so a running turn reads at the top of the
+   chat without another row. Reduced motion keeps only the static line. */
+@keyframes header-shimmer {
+ from { background-position: 100% 0; }
+ to { background-position: -100% 0; }
+}
+
+@utility turn-shimmer {
+ background: linear-gradient(
+   90deg,
+   color-mix(in oklch, var(--accent-glow) 25%, transparent) 0%,
+   color-mix(in oklch, var(--accent-glow) 25%, transparent) 30%,
+   oklch(0.74 0.14 225) 45%,
+   var(--accent-glow) 55%,
+   color-mix(in oklch, var(--accent-glow) 25%, transparent) 70%,
+   color-mix(in oklch, var(--accent-glow) 25%, transparent) 100%
+  )
+  0 0 / 200% 100%;
+
+ @media (prefers-reduced-motion: no-preference) {
+  animation: header-shimmer 1.6s linear infinite;
+ }
+ @media (prefers-reduced-motion: reduce) {
+  background: color-mix(in oklch, var(--accent-glow) 35%, transparent);
+ }
+}
+
+/* Compaction (chat/CompactPill.tsx): three lines folding toward one while
+   omp summarizes, and a highlight travelling through the words. The same
+   accent sweep as the header's working edge, so "busy" has one look. */
+@keyframes condense {
+ 0%,
+ 100% {
+  transform: scaleX(1);
+  opacity: 1;
+ }
+ 50% {
+  transform: scaleX(0.35);
+  opacity: 0.45;
+ }
+}
+
+@utility compact-shimmer {
+ color: var(--foreground);
+
+ @media (prefers-reduced-motion: no-preference) {
+  background: linear-gradient(90deg, var(--foreground) 0%, var(--foreground) 35%, var(--primary-text) 50%, var(--foreground) 65%, var(--foreground) 100%) 0 0 / 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: header-shimmer 1.8s linear infinite;
+ }
+}
+
+/* Settings -> Appearance -> Coloured markdown: the omp terminal's palette
+   (docs: omp theme, tui.colorfulMarkdown) on rendered markdown only. H1 magenta,
+   H2 yellow, H3-H6 blue, bold and italic magenta, inline code green, table
+   headers yellow. Lightness 0.78-0.86 holds 4.5:1 on the black page and on
+   surface-2/3; the hues are fixed, not the accent, so a violet accent never
+   turns every heading the same colour as its links. Inline code needs !important:
+   markdown.tsx's inlineCodeFix forces text-inherit on it with a utility-layer !important,
+   which beats an unlayered one, so these rules live in the utilities layer too. */
+@layer utilities {
+  html[data-md-colour="on"] {
+   --md-magenta: oklch(0.78 0.14 330);
+   --md-yellow: oklch(0.86 0.13 95);
+   --md-blue: oklch(0.78 0.11 250);
+   --md-green: oklch(0.8 0.14 158);
+  }
+  html[data-md-colour="on"] .md-body h1 { color: var(--md-magenta); }
+  html[data-md-colour="on"] .md-body h2 { color: var(--md-yellow); }
+  html[data-md-colour="on"] .md-body :is(h3, h4, h5, h6) { color: var(--md-blue); }
+  html[data-md-colour="on"] .md-body :is(strong, em, [data-streamdown="strong"]) { color: var(--md-magenta); }
+  html[data-md-colour="on"] .md-body :not(pre) > code { color: var(--md-green) !important; }
+  html[data-md-colour="on"] .md-body th { color: var(--md-yellow); }
+  html[data-md-colour="on"] [data-testid="appearance-preview"] :not(pre) > code { color: var(--md-green); }
+  html[data-md-colour="on"] [data-testid="appearance-preview"] strong { color: var(--md-magenta); }
+}

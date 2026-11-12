@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar glyph: the pulse line and end dot of web/public/icon.svg, as one
+     white silhouette. Android masks small icons by alpha only, so the plate and
+     gradients of the launcher icon would render as a solid blob. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M3,12 H7.22 L8.79,7.95 L11.15,14.93 L13.29,10.76 L14.48,12 H21" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M21,10.8 A1.2,1.2 0 1,0 21,13.2 A1.2,1.2 0 1,0 21,10.8 Z" />
+</vector>

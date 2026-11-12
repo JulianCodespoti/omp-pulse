@@ -1,0 +1,155 @@
+# Build the daemon archives for every target in scripts/release/targets.json
+# and attach them to the GitHub release of the tag, as a draft until the
+# maintainer publishes it.
+#
+# The signed public APK is NOT built here: its key stays on the maintainer's
+# machine. scripts/release/release.sh attaches it (before or after this run)
+# and `release.sh --publish` makes the release public once SHA256SUMS lists
+# every archive and the APK. See docs/contributing/releasing.md.
+#
+# One web build feeds every target: build.rs embeds public/app and asserts
+# that OMP_PULSE_RELEASE_ID matches the release-id file inside it, so all
+# archives (and the APK, built from the same clean tag) share one release ID.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)build, e.g. v0.1.0
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  web:
+    name: Web client
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      release-id: ${{ steps.id.outputs.release-id }}
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - name: Tag matches Cargo.toml
+        run: |
+          version="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          [ "v$version" = "$TAG" ] || { echo "::error::tag $TAG but Cargo.toml says $version"; exit 1; }
+      # Before anything writes into the tree: the ID fingerprints its state.
+      - id: id
+        run: echo "release-id=$(scripts/release/release-id.sh)" >> "$GITHUB_OUTPUT"
+      - id: targets
+        run: echo "targets=$(jq -c . scripts/release/targets.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # The web build writes the licence notices, which needs `cargo metadata`.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        env:
+          VITE_RELEASE_ID: ${{ steps.id.outputs.release-id }}
+        run: |
+          npm ci --prefix web --no-audit --no-fund
+          cd web && npx vite build --base=./ --outDir ../public/app --emptyOutDir --sourcemap false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-client
+          path: public/app
+          if-no-files-found: error
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: web
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.web.outputs.targets) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-client
+          path: public/app
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # ring compiles C; musl-gcc gives it a musl sysroot for the native arch.
+      - name: musl C toolchain
+        if: contains(matrix.target, '-linux-musl')
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends musl-tools
+          echo "CC_${TARGET//-/_}=musl-gcc" >> "$GITHUB_ENV"
+      # Static binaries need nothing from the host: musl links libc in, and
+      # the MSVC build links the C runtime in, so no Visual C++ Redistributable
+      # is required. Same mechanism as scripts/android/build-runtime.sh.
+      - name: Static C runtime
+        if: contains(matrix.target, '-linux-musl') || contains(matrix.target, '-windows-msvc')
+        run: |
+          triple="${TARGET//-/_}"
+          echo "CARGO_TARGET_${triple^^}_RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+      - name: Build
+        env:
+          OMP_PULSE_RELEASE_ID: ${{ needs.web.outputs.release-id }}
+        run: cargo build --release --locked --target "$TARGET"
+      # x86_64-apple-darwin is cross-built on Apple silicon; it is not run.
+      - name: Smoke
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: |
+          exe="target/$TARGET/release/omp-pulse"
+          [[ "$TARGET" == *-windows-* ]] && exe+=".exe"
+          out="$("$exe" --version)"
+          echo "$out"
+          [ "$out" = "omp-pulse ${TAG#v}" ]
+          case "$TARGET" in
+            *-linux-musl) file "$exe" | tee /dev/stderr | grep -q 'static' ;;
+            # The import table names every DLL as plain ASCII.
+            *-windows-msvc) ! grep -aqiE 'vcruntime[0-9]+\.dll|api-ms-win-crt-' "$exe" ;;
+          esac
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bin-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/omp-pulse${{ contains(matrix.target, '-windows-') && '.exe' || '' }}
+          if-no-files-found: error
+
+  publish:
+    name: Attach to release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: bin-*
+          path: bins
+      - run: scripts/release/package.sh bins dist
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release/publish-assets.sh "$TAG" dist

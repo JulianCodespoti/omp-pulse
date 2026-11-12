@@ -1,0 +1,11 @@
+{
+  "source_commit": "8968cc2534903ed6abce32960082f26cd9896233",
+  "source_blob": "e7dd7f70c0b1308690e6b5c49411af511e858c69",
+  "extraction": "Exact string-literal concatenations from pinned NativeOutbox.Helper.onCreate; no hand-authored schema",
+  "create_sql": [
+    "CREATE TABLE commands(namespace TEXT NOT NULL,origin TEXT NOT NULL,command_id TEXT NOT NULL,session_path TEXT NOT NULL,text TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,state TEXT NOT NULL,receipt TEXT,error TEXT,legacy INTEGER NOT NULL,may_post INTEGER NOT NULL,payload_hash TEXT NOT NULL,payload_bytes INTEGER NOT NULL,notification_reply INTEGER NOT NULL,notify_title TEXT NOT NULL,notify_body TEXT NOT NULL,notify_kind TEXT NOT NULL,notify_tag TEXT NOT NULL,PRIMARY KEY(namespace,origin,command_id))",
+    "CREATE TABLE attachments(namespace TEXT NOT NULL,origin TEXT NOT NULL,command_id TEXT NOT NULL,image_index INTEGER NOT NULL,mime_type TEXT NOT NULL,file_path TEXT NOT NULL,byte_count INTEGER NOT NULL,PRIMARY KEY(namespace,origin,command_id,image_index))",
+    "CREATE TABLE tombstones(namespace TEXT NOT NULL,origin TEXT NOT NULL,command_id TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(namespace,origin,command_id))",
+    "CREATE TABLE clear_markers(namespace TEXT NOT NULL,origin TEXT NOT NULL,session_path TEXT NOT NULL,clear_at INTEGER NOT NULL,PRIMARY KEY(namespace,origin,session_path))"
+  ]
+}

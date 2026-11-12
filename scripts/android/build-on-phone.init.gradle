@@ -1,0 +1,12 @@
+// Gradle init script for building the APK ON an arm64 phone (scripts/android/build-on-phone.sh).
+//
+// AGP 8.2.1 defaults to build-tools 34.0.0 and would try to download it; the
+// phone SDK carries only newer build-tools. Pinning the version here, rather
+// than in app/build.gradle, keeps laptop builds on AGP's default.
+// aapt2 is NOT handled here: build-tools' aapt2 is an x86_64 binary even in a
+// phone SDK, so the script passes -Pandroid.aapt2FromMavenOverride instead.
+def buildTools = System.getenv('OMP_PULSE_BUILD_TOOLS') ?: '36.0.0'
+allprojects {
+    plugins.withId('com.android.application') { android.buildToolsVersion = buildTools }
+    plugins.withId('com.android.library') { android.buildToolsVersion = buildTools }
+}

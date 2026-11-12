@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="choose_run_on"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_choose_run_on"
+        android:shortcutLongLabel="@string/shortcut_choose_run_on">
+        <intent
+            android:action="com.omppulse.app.CHOOSE_RUN_ON"
+            android:targetPackage="com.omppulse.app"
+            android:targetClass="com.omppulse.app.MainActivity" />
+    </shortcut>
+</shortcuts>

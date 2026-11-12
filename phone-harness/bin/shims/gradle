@@ -1,0 +1,11 @@
+#!/bin/sh
+# phone-harness shim (linked as /usr/local/bin/gradle): Gradle builds go through the
+# machine-wide job broker (bin/heavy); --stop/--version and nested calls go direct.
+REAL=/usr/bin/gradle
+if [ -z "$HEAVY_JOB_ID" ] && [ "$HEAVY" != off ]; then
+  case "$1" in
+    --stop | --version | -v | "") ;;
+    *) exec /root/projects/phone-harness/bin/heavy run -- "$REAL" "$@" ;;
+  esac
+fi
+exec "$REAL" "$@"

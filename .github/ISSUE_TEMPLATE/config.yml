@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/JulianCodespoti/omp-pulse/security/advisories/new
+    about: Report vulnerabilities privately, never in a public issue. See SECURITY.md.
+  - name: Problems with omp itself
+    url: https://github.com/can1357/oh-my-pi/issues
+    about: Bugs in the omp coding agent belong upstream.

@@ -1,0 +1,824 @@
+#!/usr/bin/env python3
+"""omp phone runtime: one persistent MCP stdio server for this phone.
+
+Drives the omp-pulse PhoneApi (port from endpoint.json, 7690 on older app builds):
+accessibility tree, gestures, keys, text, apps, screenshots, clipboard.
+
+What the persistent process buys over the `android` CLI:
+  * ~300 ms CLI start (proot + Python) becomes a 2-15 ms in-process call.
+  * Stable refs: a node keeps its @eN across observations while it exists, so
+    diffs are meaningful and an old ref never silently means another node.
+  * Refs and text targets are resolved against a fresh tree at action time.
+  * Clickable rows are labelled with their children's text.
+  * Batched steps with guards, waits and settle detection in one round trip.
+
+Usage: phone-mcp                 MCP over stdio (newline-delimited JSON-RPC)
+       phone-mcp --once TOOL JSON  run one tool and print its text (manual checks)
+"""
+import hashlib
+import http.client
+import json
+import os
+import re
+import sys
+import time
+import urllib.parse
+
+ENDPOINT_FILE = "/root/.config/omp-phone/endpoint.json"
+DEFAULT_PHONE_PORT = 7690  # app builds that predate endpoint.json
+PHONE_TOKEN = "/root/.config/omp-phone/token"
+TIMEOUT = 30
+PROTOCOL_VERSION = "2025-06-18"
+KEYS = ("back", "home", "recents", "notifications", "quick_settings")
+WINDOW_TYPES = {1: "app", 2: "ime", 3: "system", 4: "overlay", 5: "divider", 6: "magnifier"}
+ACTIONABLE = frozenset(("clickable", "editable", "scrollable"))
+FLAG_LETTERS = (("clickable", "c"), ("editable", "e"), ("scrollable", "s"), ("focused", "f"))
+HEADER_RE = re.compile(r"^# window (-?\d+) type=(\d+)$")
+NODE_RE = re.compile(
+    r'^(?P<indent> *)(?P<cls>\S+)(?: text="(?P<text>[^"]*)")?(?: desc="(?P<desc>[^"]*)")?'
+    r'(?: id=(?P<id>\S+))? \[(?P<l>-?\d+),(?P<t>-?\d+)\]\[(?P<r>-?\d+),(?P<b>-?\d+)\]'
+    r'(?P<flags>(?: [a-z]+)*)$')
+COORDS_RE = re.compile(r" \(-?\d+,-?\d+\)$")
+PACKAGE_RE = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+")
+LABEL_LIMIT = 100
+REGISTRY_LIMIT = 20000
+# Steps that only read or wait; anything else may change the screen and is followed by settle.
+PASSIVE_STEPS = ("wait_text", "wait_gone", "wait_package", "sleep_ms")
+GESTURE_STEPS = ("tap", "tap_text", "long_press", "swipe", "scroll", "type", "key")
+
+
+def phone_port():
+    """PhoneApi port from the app's endpoint.json (rewritten on every app start), else the old fixed port."""
+    try:
+        with open(ENDPOINT_FILE) as handle:
+            url = json.load(handle).get("phoneApi")
+        return urllib.parse.urlsplit(url).port or DEFAULT_PHONE_PORT
+    except (OSError, ValueError, AttributeError, TypeError):
+        return DEFAULT_PHONE_PORT
+
+
+class Failure(Exception):
+    """A tool failure the caller should see; never a server crash."""
+
+
+# ---------------------------------------------------------------- transport
+
+class Service:
+    """Authenticated loopback JSON service. No proxies, token cached, reloaded once on 401.
+
+    port: int or a callable re-read with the token (the app may move it on restart)."""
+
+    def __init__(self, name, port, token_path):
+        self.name, self.port_source, self.token_path = name, port, token_path
+        self.port, self.token = None, None
+
+    def _load_token(self):
+        self.port = self.port_source() if callable(self.port_source) else self.port_source
+        try:
+            with open(self.token_path) as handle:
+                self.token = handle.read().strip()
+        except OSError:
+            raise Failure("%s token missing: %s; is the app open?" % (self.name, self.token_path))
+
+    def post(self, path, body, timeout=TIMEOUT):
+        data = json.dumps(body).encode()
+        for attempt in (0, 1):
+            if self.token is None or attempt:
+                self._load_token()
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=timeout)
+            try:
+                conn.request("POST", path, data, {"Authorization": "Bearer " + self.token,
+                                                  "Content-Type": "application/json", "Connection": "close"})
+                response = conn.getresponse()
+                raw, status = response.read(), response.status
+            except (OSError, http.client.HTTPException) as error:
+                self.token = None  # re-read port and token next time: the app may have restarted
+                raise Failure("%s unreachable on 127.0.0.1:%d: %s; open the app and retry"
+                              % (self.name, self.port, error))
+            finally:
+                conn.close()
+            if status != 401:
+                break
+        else:
+            raise Failure("%s rejected the token (401); reopen the app to refresh it" % self.name)
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            raise Failure("%s returned HTTP %d without JSON" % (self.name, status))
+        if not isinstance(payload, dict):
+            raise Failure("%s returned a malformed response" % self.name)
+        return payload
+
+
+PHONE = Service("omp-pulse PhoneApi", phone_port, PHONE_TOKEN)
+
+
+def phone(cmd, timeout=TIMEOUT, **body):
+    result = PHONE.post("/v1/" + cmd, body, timeout)
+    if not result.get("ok"):
+        raise Failure(str(result.get("error") or "phone command failed: " + cmd))
+    return result
+
+
+# ---------------------------------------------------------------- screen model
+
+def digest(text):
+    return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
+
+
+def _clean(value):
+    return value.replace("\\n", " ").strip()
+
+
+def _clip(value, limit=LABEL_LIMIT):
+    return value if len(value) <= limit else value[:limit - 1] + "\u2026"
+
+
+def centre(bounds):
+    return (bounds[0] + bounds[2]) // 2, (bounds[1] + bounds[3]) // 2
+
+
+class Node:
+    __slots__ = ("index", "parent", "children", "window", "cls", "text", "desc", "id", "bounds", "flags")
+
+    def __init__(self, index, parent, window, match):
+        self.index, self.parent, self.children, self.window = index, parent, [], window
+        self.cls = match.group("cls")
+        self.text = _clean(match.group("text") or "")
+        self.desc = _clean(match.group("desc") or "")
+        self.id = match.group("id") or ""
+        self.bounds = tuple(int(match.group(name)) for name in ("l", "t", "r", "b"))
+        self.flags = frozenset(match.group("flags").split())
+
+    @property
+    def actionable(self):
+        return bool(self.flags & ACTIONABLE)
+
+    @property
+    def short_id(self):
+        return self.id.split(":id/", 1)[-1] if self.id else ""
+
+
+class Screen:
+    """Parsed `ui_dump`. Windows are kept in dump order, which is the accessibility
+    window list order (top-most first, as observed: edge panel, status bar, app)."""
+
+    def __init__(self, raw):
+        self.raw, self.hash = raw, digest(raw)
+        self.windows, self.nodes = [], []
+        stack = []
+        for line in raw.splitlines():
+            header = HEADER_RE.match(line)
+            if header:
+                self.windows.append({"id": int(header.group(1)), "type": int(header.group(2)),
+                                     "package": None, "bounds": None})
+                stack = []
+                continue
+            match = NODE_RE.match(line)
+            if not match:
+                continue
+            if not self.windows:  # dump without window headers: active window only
+                self.windows.append({"id": -1, "type": 1, "package": None, "bounds": None})
+            depth = len(match.group("indent")) // 2
+            while stack and stack[-1][0] >= depth:
+                stack.pop()
+            parent = stack[-1][1] if stack else None
+            node = Node(len(self.nodes), parent, len(self.windows) - 1, match)
+            self.nodes.append(node)
+            if parent is not None:
+                self.nodes[parent].children.append(node.index)
+            stack.append((depth, node.index))
+            window = self.windows[-1]
+            if window["bounds"] is None:
+                window["bounds"] = node.bounds
+            if window["package"] is None and ":id/" in node.id:
+                package = node.id.split(":id/", 1)[0]
+                if package != "android":
+                    window["package"] = package
+        bounds = [w["bounds"] for w in self.windows if w["bounds"]]
+        self.width = max([b[2] for b in bounds] or [1080])
+        self.height = max([b[3] for b in bounds] or [2400])
+        apps = [w for w in self.windows if w["type"] == 1]
+        self.foreground = next((w["package"] for w in apps if w["package"]), None)
+        self.locked = not apps and any(w["package"] == "com.android.systemui" for w in self.windows)
+        if self.foreground is None and not apps:
+            self.foreground = next((w["package"] for w in self.windows if w["package"]), None)
+        # An app window is in front but exposes no resource ids (e.g. Compose/React Native):
+        # the dump carries no package name, so it cannot be identified. Guards fail closed.
+        self.front_label = self.foreground or ("?unidentified-app" if apps else "-")
+
+    def visible(self, node):
+        left, top, right, bottom = node.bounds
+        return right > left and bottom > top and right > 0 and bottom > 0 \
+            and left < self.width and top < self.height
+
+    def actionable_ancestor(self, node):
+        """Nearest actionable ancestor, or None."""
+        index = node.parent
+        while index is not None:
+            if self.nodes[index].actionable:
+                return self.nodes[index]
+            index = self.nodes[index].parent
+        return None
+
+    def label(self, node):
+        """Own text/desc, else text of non-actionable descendants (row labels)."""
+        if node.text or node.desc:
+            return node.text or node.desc
+        parts, pending = [], list(reversed(node.children))
+        while pending and len(parts) < 3:
+            child = self.nodes[pending.pop()]
+            if child.actionable and child.index != node.index:
+                continue
+            value = child.text or child.desc
+            if value and value not in parts:
+                parts.append(value)
+            pending.extend(reversed(child.children))
+        return " \u00b7 ".join(parts)
+
+    def window_name(self, index):
+        window = self.windows[index]
+        return "%s %s" % (WINDOW_TYPES.get(window["type"], "type%d" % window["type"]), window["package"] or "-")
+
+
+def node_keys(screen):
+    """Stable identity for each actionable node: window kind/package, class, id, label, occurrence."""
+    keys, seen = {}, {}
+    for node in screen.nodes:
+        if not node.actionable or not screen.visible(node):
+            continue
+        window = screen.windows[node.window]
+        base = (window["type"], window["package"], node.cls, node.id, screen.label(node))
+        occurrence = seen.get(base, 0)
+        seen[base] = occurrence + 1
+        keys[node.index] = base + (occurrence,)
+    return keys
+
+
+def render(screen, ref_for, mode="interactive"):
+    """-> (lines, refs {ref: node index}). Interactive hides layout noise and text
+    already folded into an actionable ancestor's label."""
+    keys = node_keys(screen)
+    lines, refs, last_window = [], {}, None
+    for node in screen.nodes:
+        if not screen.visible(node):
+            continue
+        if mode == "interactive" and not node.actionable:
+            if not (node.text or node.desc) or screen.actionable_ancestor(node) is not None:
+                continue
+        if node.window != last_window:
+            lines.append("## " + screen.window_name(node.window))
+            last_window = node.window
+        bits = []
+        if node.index in keys:
+            ref = ref_for(keys[node.index])
+            refs[ref] = node.index
+            bits.append(ref)
+            letters = "".join(letter for flag, letter in FLAG_LETTERS if flag in node.flags)
+            bits.append(letters)
+            label = screen.label(node)
+        else:
+            bits.append("-")
+            label = node.text
+        if label:
+            bits.append('"%s"' % _clip(label))
+        if node.desc and node.desc != label:
+            bits.append("~" + _clip(node.desc))
+        if not label and not node.desc:
+            bits.append(node.cls.rsplit(".", 1)[-1] + (" id=" + node.short_id if node.short_id else ""))
+        bits.append("(%d,%d)" % centre(node.bounds))
+        lines.append(" ".join(bits))
+    return lines, refs
+
+
+def diff(before, after):
+    """Changed lines ignoring coordinates and window headers -> (added, removed)."""
+    def strip(lines):
+        return [COORDS_RE.sub("", line) for line in lines if not line.startswith("## ")]
+    old, new = strip(before), strip(after)
+    old_set, new_set = set(old), set(new)
+    return [line for line in new if line not in old_set], [line for line in old if line not in new_set]
+
+
+def match_score(node, needle):
+    """0 exact, 1 prefix, 2 substring, None no match; text before desc."""
+    best = None
+    for value in (node.text, node.desc):
+        value = value.casefold()
+        if not value:
+            continue
+        score = 0 if value == needle else 1 if value.startswith(needle) else 2 if needle in value else None
+        if score is not None and (best is None or score < best):
+            best = score
+    return best
+
+
+def find_text(screen, text):
+    """Best visible node for text: exact > prefix > substring, then top-most window,
+    then document order. Returns (node, number of equally good candidates)."""
+    needle = text.casefold().strip()
+    if not needle:
+        raise Failure("empty text target")
+    candidates = []
+    for node in screen.nodes:
+        if not screen.visible(node):
+            continue
+        score = match_score(node, needle)
+        if score is None and node.actionable:
+            score = match_score_label(screen, node, needle)
+        if score is not None:
+            candidates.append((score, node.window, node.index, node))
+    if not candidates:
+        raise Failure("no visible node matches %r" % text)
+    candidates.sort(key=lambda item: item[:3])
+    best = candidates[0]
+    ties = sum(1 for item in candidates if item[:2] == best[:2])
+    return best[3], ties
+
+
+def match_score_label(screen, node, needle):
+    label = screen.label(node).casefold()
+    if not label:
+        return None
+    return 0 if label == needle else 1 if label.startswith(needle) else 2 if needle in label else None
+
+
+def tap_target(screen, node):
+    """Node to tap for a match: itself if clickable, else nearest clickable ancestor."""
+    if "clickable" in node.flags:
+        return node
+    index = node.parent
+    while index is not None:
+        if "clickable" in screen.nodes[index].flags:
+            return screen.nodes[index]
+        index = screen.nodes[index].parent
+    return node
+
+
+# ---------------------------------------------------------------- runtime
+
+class Runtime:
+    def __init__(self):
+        self.screen = None
+        self.lines, self.refs = [], {}
+        self.registry, self.keys, self.next_ref = {}, {}, 1
+        self.version, self.mode = 0, "interactive"
+        self.stats = {"dumps": 0, "observe": 0, "act": 0, "steps": 0}
+
+    # refs ---------------------------------------------------------------
+    def ref_for(self, key):
+        ref = self.registry.get(key)
+        if ref is None:
+            if len(self.registry) >= REGISTRY_LIMIT:
+                self.registry.clear()
+                self.keys.clear()
+            ref = "@e%d" % self.next_ref
+            self.next_ref += 1
+            self.registry[key], self.keys[ref] = ref, key
+        return ref
+
+    # screen -------------------------------------------------------------
+    def fetch(self, mode=None):
+        screen = Screen(phone("ui_dump")["tree"])
+        self.stats["dumps"] += 1
+        self.adopt(screen, mode or self.mode)
+        return screen
+
+    def adopt(self, screen, mode):
+        if self.screen is None or screen.hash != self.screen.hash or mode != self.mode:
+            self.version += 1
+            self.lines, self.refs = render(screen, self.ref_for, mode)
+        self.screen, self.mode = screen, mode
+
+    def current(self):
+        return self.screen or self.fetch()
+
+    def header(self):
+        screen = self.screen
+        return "foreground=%s locked=%s windows=%d nodes=%d refs=%d v%d" % (
+            screen.front_label, str(screen.locked).lower(), len(screen.windows), len(screen.nodes),
+            len(self.refs), self.version)
+
+    def body(self, max_lines, find=None):
+        lines = self.lines
+        if find:
+            needle = find.casefold()
+            lines = [line for line in lines if line.startswith("## ") or needle in line.casefold()]
+            lines = [line for i, line in enumerate(lines)
+                     if not line.startswith("## ") or (i + 1 < len(lines) and not lines[i + 1].startswith("## "))]
+        shown = lines[:max_lines]
+        if len(lines) > max_lines:
+            shown.append("\u2026 %d more lines (raise max_nodes or use find)" % (len(lines) - max_lines))
+        return "\n".join(shown)
+
+    # targeting ----------------------------------------------------------
+    def resolve(self, target):
+        """@ref | [x, y] | {"text": ...} -> (x, y, description); refs use a fresh tree."""
+        if isinstance(target, list) and len(target) == 2:
+            return int(target[0]), int(target[1]), "(%d,%d)" % (int(target[0]), int(target[1]))
+        if isinstance(target, dict) and "text" in target:
+            return self.resolve_text(str(target["text"]))
+        if not isinstance(target, str) or not target.startswith("@e"):
+            raise Failure("target must be @ref, [x,y] or {\"text\": ...}; got %r" % (target,))
+        if target not in self.keys:
+            raise Failure("unknown ref %s; call observe" % target)
+        screen = self.fetch()
+        index = self.refs.get(target)
+        if index is None:
+            raise Failure("%s (%s) is not on the current screen" % (target, _clip(self.keys[target][4] or "unlabelled", 40)))
+        node = screen.nodes[index]
+        x, y = self.visible_centre(screen, node)
+        return x, y, "%s (%d,%d)" % (target, x, y)
+
+    def resolve_text(self, text):
+        screen = self.fetch()
+        node, ties = find_text(screen, text)
+        target = tap_target(screen, node)
+        x, y = self.visible_centre(screen, target)
+        note = "%r -> %s" % (text, _clip(screen.label(target) or target.cls.rsplit(".", 1)[-1], 40))
+        if ties > 1:
+            note += " (first of %d equal matches)" % ties
+        return x, y, note + " (%d,%d)" % (x, y)
+
+    @staticmethod
+    def visible_centre(screen, node):
+        left, top, right, bottom = node.bounds
+        left, top = max(left, 0), max(top, 0)
+        right, bottom = min(right, screen.width), min(bottom, screen.height)
+        if right <= left or bottom <= top:
+            raise Failure("target is off screen; scroll first")
+        return (left + right) // 2, (top + bottom) // 2
+
+    def scroll_region(self, spec):
+        if spec is not None:
+            screen = self.fetch()
+            if spec not in self.refs:
+                self.resolve(spec)  # raises the precise error
+            return screen.nodes[self.refs[spec]].bounds
+        screen = self.fetch()
+        best = None
+        for node in screen.nodes:
+            if "scrollable" in node.flags and screen.visible(node) and screen.windows[node.window]["type"] == 1:
+                area = (node.bounds[2] - node.bounds[0]) * (node.bounds[3] - node.bounds[1])
+                if best is None or area > best[0]:
+                    best = (area, node.bounds)
+        return best[1] if best else (0, int(screen.height * 0.12), screen.width, int(screen.height * 0.88))
+
+    # waiting ------------------------------------------------------------
+    def wait_until(self, predicate, timeout_ms, poll_ms=60):
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while True:
+            if predicate(self.fetch()):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(poll_ms / 1000.0)
+
+    def settle(self, before_hash, settle_ms, max_wait_ms, grace_ms, poll_ms=25):
+        """Wait for the first change (up to grace_ms), then for settle_ms of quiet.
+        -> (changed, timed_out, elapsed_ms)."""
+        start = time.monotonic()
+        current, last_change = before_hash, None
+        while True:
+            time.sleep(poll_ms / 1000.0)
+            screen = self.fetch()
+            now = time.monotonic()
+            if screen.hash != current:
+                current, last_change = screen.hash, now
+            elapsed = (now - start) * 1000
+            if last_change is None and elapsed >= grace_ms:
+                return False, False, elapsed
+            if last_change is not None and (now - last_change) * 1000 >= settle_ms:
+                return True, False, elapsed
+            if elapsed >= max_wait_ms:
+                return current != before_hash, True, elapsed
+
+
+def _text_present(screen, needle):
+    needle = needle.casefold()
+    return any(screen.visible(n) and (needle in n.text.casefold() or needle in n.desc.casefold())
+               for n in screen.nodes)
+
+
+def run_step(rt, step, expect_package):
+    if not isinstance(step, dict) or not step:
+        raise Failure("each step is an object with one action key")
+    action = next(iter(step))
+    value = step[action]
+    if action in GESTURE_STEPS and expect_package:
+        front = rt.fetch().foreground
+        if front != expect_package:
+            raise Failure("aborted: %s is in front, expected %s" % (rt.screen.front_label, expect_package))
+
+    if action == "tap":
+        x, y, note = rt.resolve(value)
+        phone("tap", x=x, y=y)
+        return "tap " + note
+    if action == "tap_text":
+        x, y, note = rt.resolve_text(str(value))
+        phone("tap", x=x, y=y)
+        return "tap_text " + note
+    if action == "long_press":
+        x, y, note = rt.resolve(value)
+        phone("swipe", x1=x, y1=y, x2=x, y2=y, ms=int(step.get("ms", 650)))
+        return "long_press " + note
+    if action == "swipe":
+        if not (isinstance(value, list) and len(value) in (4, 5)):
+            raise Failure("swipe needs [x1,y1,x2,y2] or [x1,y1,x2,y2,ms]")
+        x1, y1, x2, y2 = (int(v) for v in value[:4])
+        phone("swipe", x1=x1, y1=y1, x2=x2, y2=y2, ms=int(value[4]) if len(value) == 5 else 300)
+        return "swipe (%d,%d)->(%d,%d)" % (x1, y1, x2, y2)
+    if action == "scroll":
+        direction = value if isinstance(value, str) else value.get("direction")
+        region = rt.scroll_region(None if isinstance(value, str) else value.get("in"))
+        left, top, right, bottom = region
+        cx, cy, w, h = (left + right) // 2, (top + bottom) // 2, right - left, bottom - top
+        vectors = {"down": (cx, top + int(h * .8), cx, top + int(h * .2)),
+                   "up": (cx, top + int(h * .2), cx, top + int(h * .8)),
+                   "right": (left + int(w * .8), cy, left + int(w * .2), cy),
+                   "left": (left + int(w * .2), cy, left + int(w * .8), cy)}
+        if direction not in vectors:
+            raise Failure("scroll direction must be up, down, left or right")
+        x1, y1, x2, y2 = vectors[direction]
+        phone("swipe", x1=x1, y1=y1, x2=x2, y2=y2, ms=int(step.get("ms", 300)))
+        return "scroll %s" % direction
+    if action == "type":
+        text, into = (value, None) if isinstance(value, str) else (value.get("text", ""), value.get("into"))
+        if into is not None:
+            x, y, note = rt.resolve(into if not isinstance(into, str) or into.startswith("@") else {"text": into})
+            phone("tap", x=x, y=y)
+            if not rt.wait_until(lambda s: any("editable" in n.flags and "focused" in n.flags for n in s.nodes), 1500):
+                raise Failure("no editable field took focus after tapping " + note)
+        phone("type", text=str(text))
+        return "type %d chars%s (replaces field text)" % (len(str(text)), "" if into is None else " into " + str(into))
+    if action == "key":
+        if value not in KEYS:
+            raise Failure("key must be one of " + ", ".join(KEYS))
+        phone("key", name=value)
+        return "key " + value
+    if action == "launch":
+        if not PACKAGE_RE.fullmatch(str(value)):
+            raise Failure("launch needs a package name")
+        phone("launch", package=value)
+        return "launch " + value
+    if action == "open":
+        phone("open", target=str(value))
+        return "open " + str(value)
+    if action == "intent":
+        if not isinstance(value, dict):
+            raise Failure("intent needs an object")
+        body = {k: value[k] for k in ("action", "data", "type", "package", "component", "category", "extras")
+                if k in value}
+        body["mode"] = value.get("mode", "activity")
+        if body["mode"] not in ("activity", "broadcast", "service"):
+            raise Failure("intent mode must be activity, broadcast or service")
+        phone("intent", **body)
+        return "intent " + str(body.get("action") or body.get("component") or body.get("data") or "")
+    if action == "clipboard_set":
+        phone("clipboard_set", text=str(value))
+        return "clipboard set"
+    if action == "notify":
+        if not (isinstance(value, list) and len(value) == 2):
+            raise Failure("notify needs [title, text]")
+        phone("notify", title=str(value[0]), text=str(value[1]))
+        return "notify"
+    if action == "sleep_ms":
+        time.sleep(max(0, min(int(value), 10000)) / 1000.0)
+        return "slept %d ms" % int(value)
+    if action in ("wait_text", "wait_gone", "wait_package"):
+        timeout = max(0, min(int(step.get("timeout_ms", 10000)), 30000))
+        if action == "wait_package":
+            test = lambda s: s.foreground == value
+        elif action == "wait_text":
+            test = lambda s: _text_present(s, str(value))
+        else:
+            test = lambda s: not _text_present(s, str(value))
+        if not rt.wait_until(test, timeout):
+            raise Failure("%s %r timed out after %d ms" % (action, value, timeout))
+        return "%s %r ok" % (action, value)
+    raise Failure("unknown step %r" % action)
+
+
+# ---------------------------------------------------------------- tools
+
+def tool_observe(args):
+    rt = RUNTIME
+    previous_lines, previous_version = list(rt.lines), rt.version
+    started = time.perf_counter()
+    rt.fetch(args.get("mode", "interactive"))
+    rt.stats["observe"] += 1
+    ms = (time.perf_counter() - started) * 1000
+    head = "%s %.1fms" % (rt.header(), ms)
+    if args.get("diff_only") and previous_version:
+        if rt.version == previous_version:
+            return head + "\n(unchanged)"
+        added, removed = diff(previous_lines, rt.lines)
+        return head + "\n" + "\n".join(["+ " + l for l in added[:60]] + ["- " + l for l in removed[:60]])
+    return head + "\n" + rt.body(int(args.get("max_nodes", 200)), args.get("find"))
+
+
+def tool_act(args):
+    steps = args.get("steps")
+    if not (isinstance(steps, list) and steps):
+        raise Failure("steps must be a non-empty list")
+    if len(steps) > 25:
+        raise Failure("at most 25 steps per call")
+    rt = RUNTIME
+    rt.stats["act"] += 1
+    started = time.perf_counter()
+    rt.fetch("interactive")
+    before_lines = list(rt.lines)
+    expect = args.get("expect_package")
+    report, failure, pre_hash, mutated = [], None, rt.screen.hash, False
+    for number, step in enumerate(steps, 1):
+        step_started = time.perf_counter()
+        try:
+            action = next(iter(step)) if isinstance(step, dict) and step else None
+            if action not in PASSIVE_STEPS:
+                pre_hash = rt.screen.hash
+            note = run_step(rt, step, expect)
+            mutated = mutated or action not in PASSIVE_STEPS
+            rt.stats["steps"] += 1
+            report.append("%d %s %.0fms" % (number, note, (time.perf_counter() - step_started) * 1000))
+        except Failure as error:
+            failure = "%d FAILED %s: %s" % (number, json.dumps(step, ensure_ascii=False)[:120], error)
+            break
+    settle_note = ""
+    if mutated:
+        grace = int(args.get("grace_ms", 350))
+        changed, timed_out, elapsed = rt.settle(pre_hash, int(args.get("settle_ms", 80)),
+                                                int(args.get("max_wait_ms", 3000)), grace)
+        settle_note = " · settle %.0fms%s%s" % (elapsed, "" if changed else " no change",
+                                                 " still changing" if timed_out else "")
+    added, removed = diff(before_lines, rt.lines)
+    total = (time.perf_counter() - started) * 1000
+    lines = ["%s %d/%d steps · %.0fms%s" % ("FAILED" if failure else "ok", len(report), len(steps), total, settle_note)]
+    lines += report
+    if failure:
+        lines.append(failure)
+    lines.append(rt.header())
+    lines += ["+ " + l for l in added[:40]] + ["- " + l for l in removed[:40]]
+    if len(added) > 40 or len(removed) > 40:
+        lines.append("\u2026 %d added, %d removed in total" % (len(added), len(removed)))
+    show = args.get("screen", "changed")
+    if show == "always" or (show == "changed" and (added or removed)):
+        lines.append(rt.body(int(args.get("max_nodes", 150))))
+    text = "\n".join(lines)
+    if failure:
+        raise ToolError(text)
+    return text
+
+
+class ToolError(Failure):
+    """Failure carrying a full report (steps done before the failure, current screen)."""
+
+
+def tool_status(args):
+    out = {"phone": phone("status"), "runtime": dict(RUNTIME.stats, refs_known=len(RUNTIME.registry),
+                                                       version=RUNTIME.version)}
+    return json.dumps(out, ensure_ascii=False)
+
+
+def tool_apps(args):
+    needle = (args.get("filter") or "").casefold()
+    rows = [a for a in phone("apps").get("apps", [])
+            if (args.get("include_system") or not a.get("system"))
+            and (not needle or needle in a.get("package", "").casefold() or needle in a.get("label", "").casefold())]
+    return "%d apps\n" % len(rows) + "\n".join("%s\t%s" % (a.get("package"), a.get("label", "")) for a in rows[:300])
+
+
+def tool_screenshot(args):
+    front = RUNTIME.fetch().foreground
+    if args.get("only") and front != args["only"]:
+        raise Failure("refusing screenshot: %s is in front, not %s" % (RUNTIME.screen.front_label, args["only"]))
+    path = args.get("path") or "/sdcard/Pictures/omp/screenshot-%s.png" % time.strftime("%Y%m%d-%H%M%S")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    phone("screenshot", path=path)
+    return json.dumps({"path": path, "foreground": front})
+
+
+def tool_clipboard(args):
+    if args.get("action") == "set":
+        phone("clipboard_set", text=str(args.get("text", "")))
+        return "ok"
+    return phone("clipboard_get").get("text", "")
+
+
+TARGET_DOC = "Targets: @ref (stable while the node exists, resolved on a fresh tree), [x,y], or {\"text\": ...}."
+TOOLS = [
+    ("observe",
+     "Current screen as compact lines grouped by window: '@e12 c \"Wi-Fi · Off\" (540,1234)' "
+     "(flags c=clickable e=editable s=scrollable f=focused; '-' lines are plain text). Clickable rows carry "
+     "their children's text. Refs stay the same across observations while the node exists. "
+     "diff_only returns only what changed since the last observe/act; find filters lines by substring.",
+     {"type": "object", "properties": {
+         "mode": {"enum": ["interactive", "full"], "description": "full also lists layout nodes"},
+         "max_nodes": {"type": "integer", "description": "line cap (default 200)"},
+         "find": {"type": "string", "description": "only lines containing this text"},
+         "diff_only": {"type": "boolean"}}},
+     tool_observe),
+    ("act",
+     "Run up to 25 UI steps in one call, wait for the screen to settle, return step results, the change "
+     "diff and (if changed) the new screen. Steps: {tap:T} {tap_text:str} {long_press:T} "
+     "{type:str | {text, into:T|str}} (replaces field text) {scroll:up|down|left|right | {direction, in:@ref}} "
+     "{swipe:[x1,y1,x2,y2,ms?]} {key:back|home|recents|notifications|quick_settings} {launch:pkg} "
+     "{open:url|path} {intent:{action,data,type,package,component,category,extras,mode}} {clipboard_set:str} "
+     "{notify:[title,text]} {wait_text:str, timeout_ms?} {wait_gone:str} {wait_package:pkg} {sleep_ms:n}. "
+     + TARGET_DOC + " expect_package aborts gestures if another app comes to the front. "
+     "Stops at the first failing step.",
+     {"type": "object", "properties": {
+         "steps": {"type": "array", "items": {"type": "object"}},
+         "expect_package": {"type": "string", "description": "abort gestures unless this app is in front"},
+         "settle_ms": {"type": "integer", "description": "quiet time that counts as settled (default 80)"},
+         "grace_ms": {"type": "integer", "description": "wait this long for a change to start (default 350)"},
+         "max_wait_ms": {"type": "integer", "description": "settle cap (default 3000)"},
+         "screen": {"enum": ["changed", "always", "never"], "description": "when to append the screen"},
+         "max_nodes": {"type": "integer"}},
+      "required": ["steps"]},
+     tool_act),
+    ("status", "PhoneApi grants and runtime counters.",
+     {"type": "object", "properties": {}}, tool_status),
+    ("apps", "Installed apps (package and label); user apps unless include_system.",
+     {"type": "object", "properties": {"filter": {"type": "string"}, "include_system": {"type": "boolean"}}},
+     tool_apps),
+    ("screenshot", "Save a PNG of the screen (default /sdcard/Pictures/omp/) and return its path.",
+     {"type": "object", "properties": {"path": {"type": "string"},
+                                       "only": {"type": "string", "description": "refuse unless this package is in front"}}},
+     tool_screenshot),
+    ("clipboard", "Read or write the phone clipboard (may hold secrets: do not echo unprompted).",
+     {"type": "object", "properties": {"action": {"enum": ["get", "set"]}, "text": {"type": "string"}}},
+     tool_clipboard),
+]
+TOOL_IMPL = {name: impl for name, _, _, impl in TOOLS}
+
+
+# ---------------------------------------------------------------- MCP binding
+
+def call_tool(name, args):
+    def result(text, error=False):
+        out = {"content": [{"type": "text", "text": text}]}
+        if error:
+            out["isError"] = True
+        return out
+    if name not in TOOL_IMPL:
+        return result("unknown tool: %s" % name, True)
+    try:
+        return result(TOOL_IMPL[name](args if isinstance(args, dict) else {}))
+    except Failure as error:
+        return result(str(error), True)
+    except Exception as error:  # a tool bug must never take the session's server down
+        return result("internal error in %s: %s: %s" % (name, type(error).__name__, error), True)
+
+
+def handle(message):
+    if not isinstance(message, dict):
+        return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "invalid request"}}
+    method, ident = message.get("method"), message.get("id")
+    params = message.get("params") or {}
+    if method == "initialize":
+        return {"jsonrpc": "2.0", "id": ident, "result": {
+            "protocolVersion": params.get("protocolVersion", PROTOCOL_VERSION),
+            "capabilities": {"tools": {"listChanged": False}},
+            "serverInfo": {"name": "phone", "version": "2.0.0"}}}
+    if ident is None:  # notifications never get replies
+        return None
+    if method == "ping":
+        return {"jsonrpc": "2.0", "id": ident, "result": {}}
+    if method == "tools/list":
+        return {"jsonrpc": "2.0", "id": ident, "result": {"tools": [
+            {"name": n, "description": d, "inputSchema": s} for n, d, s, _ in TOOLS]}}
+    if method == "tools/call":
+        return {"jsonrpc": "2.0", "id": ident, "result": call_tool(params.get("name"), params.get("arguments"))}
+    return {"jsonrpc": "2.0", "id": ident, "error": {"code": -32601, "message": "method not found: %s" % method}}
+
+
+RUNTIME = Runtime()
+
+
+def serve():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            reply = handle(json.loads(line))
+        except ValueError:
+            reply = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
+        if reply is not None:
+            sys.stdout.write(json.dumps(reply, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+
+
+def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == "--once":
+        args = json.loads(sys.argv[3]) if len(sys.argv) > 3 else {}
+        out = call_tool(sys.argv[2], args)
+        print(out["content"][0]["text"])
+        sys.exit(1 if out.get("isError") else 0)
+    if len(sys.argv) > 1:
+        sys.exit(__doc__)
+    serve()
+
+
+if __name__ == "__main__":
+    main()
