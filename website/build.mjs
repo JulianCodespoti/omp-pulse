@@ -39,66 +39,74 @@ export const DOC_PAGES = [
   {
     slug: "docs/index.html",
     source: "docs/README.md",
-    group: "Overview",
-    title: "Documentation Overview",
+    group: "Start here",
+    title: "Documentation overview",
     shortTitle: "Overview",
-    description: "Complete user, contributor, and architecture documentation for OMP Pulse.",
+    description: "Every guide, organised by what you want to do.",
+  },
+  {
+    slug: "docs/getting-started.html",
+    source: "docs/user/getting-started.md",
+    group: "Start here",
+    title: "Getting started",
+    shortTitle: "Getting started",
+    description: "Install Pulse, pair your phone and start your first conversation.",
   },
   {
     slug: "docs/phone-mode.html",
     source: "docs/user/phone-mode.md",
-    group: "User Guides",
-    title: "Android Phone Mode",
-    shortTitle: "Android Phone Mode",
-    description: "Run omp and the Pulse daemon directly on an Android phone with an Alpine Linux workspace and Android agent tools.",
-  },
-  {
-    slug: "docs/configuration.html",
-    source: "docs/user/configuration.md",
-    group: "User Guides",
-    title: "Configuration & CLI Reference",
-    shortTitle: "Configuration & CLI",
-    description: "Commands, pairing roles, config.toml, state files, environment variables, and local speech-to-text.",
-  },
-  {
-    slug: "docs/networking.html",
-    source: "docs/user/networking.md",
-    group: "User Guides",
-    title: "Networking & HTTPS",
-    shortTitle: "Networking & HTTPS",
-    description: "Connect your phone over Tailscale HTTPS, Cloudflare Tunnel, or trusted LAN, and why secure contexts matter.",
-  },
-  {
-    slug: "docs/windows.html",
-    source: "docs/user/windows.md",
-    group: "User Guides",
-    title: "Running on Windows",
-    shortTitle: "Windows Setup",
-    description: "Installing and running the OMP Pulse daemon on Windows 10 and 11.",
+    group: "Start here",
+    title: "Phone mode",
+    shortTitle: "Phone mode",
+    description: "Run the coding agent on your Android phone, with no computer.",
   },
   {
     slug: "docs/plugins.html",
     source: "docs/user/plugins.md",
-    group: "User Guides",
-    title: "Sandboxed Phone Plugins",
+    group: "Using Pulse",
+    title: "Plugins",
     shortTitle: "Plugins",
-    description: "Extend OMP Pulse with sandboxed UI plugins fed by host commands, custom cards, drawer chips, and reviewable actions.",
+    description: "Add your own buttons, chips and cards to the app, or have your agent build them.",
+  },
+  {
+    slug: "docs/networking.html",
+    source: "docs/user/networking.md",
+    group: "Using Pulse",
+    title: "Networking",
+    shortTitle: "Networking",
+    description: "Reach your computer from anywhere: Tailscale, Cloudflare Tunnel or home Wi-Fi.",
+  },
+  {
+    slug: "docs/windows.html",
+    source: "docs/user/windows.md",
+    group: "Using Pulse",
+    title: "Windows",
+    shortTitle: "Windows",
+    description: "Install and run Pulse on Windows 10 and 11.",
+  },
+  {
+    slug: "docs/configuration.html",
+    source: "docs/user/configuration.md",
+    group: "Using Pulse",
+    title: "Configuration & CLI reference",
+    shortTitle: "Configuration & CLI",
+    description: "Every command and setting, for when you want to change the defaults.",
   },
   {
     slug: "docs/architecture.html",
     source: "docs/internals/architecture.md",
-    group: "Internals & Security",
-    title: "Architecture & Live Sync",
+    group: "Under the hood",
+    title: "Architecture",
     shortTitle: "Architecture",
-    description: "How the single-binary Rust daemon coordinates RPC children, desktop bridges, collab relays, and file tailing.",
+    description: "How Pulse keeps your phone and terminal in step without overwriting each other's work.",
   },
   {
     slug: "docs/security.html",
     source: "SECURITY.md",
-    group: "Internals & Security",
-    title: "Security & Threat Model",
-    shortTitle: "Security Model",
-    description: "Device roles, credential storage, session write arbitration, on-device proot runtime boundaries, and vulnerability reporting.",
+    group: "Under the hood",
+    title: "Security",
+    shortTitle: "Security",
+    description: "Who can do what, where credentials live, and how to report a problem.",
   },
   {
     slug: "docs/contributing.html",
@@ -106,7 +114,7 @@ export const DOC_PAGES = [
     group: "Project",
     title: "Contributing",
     shortTitle: "Contributing",
-    description: "Building the React client, Rust daemon, and Android APK, plus running the CI validation gate.",
+    description: "Build Pulse from source and run the checks before sending a change.",
   },
   {
     slug: "docs/changelog.html",
@@ -114,7 +122,7 @@ export const DOC_PAGES = [
     group: "Project",
     title: "Changelog",
     shortTitle: "Changelog",
-    description: "Release history and notable improvements in OMP Pulse.",
+    description: "What changed in each release.",
   },
 ];
 
@@ -218,10 +226,10 @@ function renderHeader(rootPrefix, activeSection) {
       <span class="brand-tag">v${escapeHtml(VERSION)}</span>
     </a>
     <nav class="nav-links" aria-label="Primary">
-      <a class="nav-link" href="${rootPrefix}index.html#tour"${activeSection === "home" ? ' aria-current="page"' : ""}>Product</a>
-      <a class="nav-link" href="${rootPrefix}index.html#phone-mode">Phone Mode</a>
-      <a class="nav-link" href="${rootPrefix}index.html#architecture">Architecture</a>
-      <a class="nav-link" href="${rootPrefix}index.html#downloads">Downloads</a>
+      <a class="nav-link" href="${rootPrefix}index.html#features"${activeSection === "home" ? ' aria-current="page"' : ""}>Features</a>
+      <a class="nav-link" href="${rootPrefix}index.html#modes">Ways to use it</a>
+      <a class="nav-link" href="${rootPrefix}index.html#safety">Safety</a>
+      <a class="nav-link" href="${rootPrefix}index.html#downloads">Download</a>
       <a class="nav-link" href="${rootPrefix}docs/index.html"${activeSection === "docs" ? ' aria-current="page"' : ""}>Docs</a>
     </nav>
     <div class="header-actions">
@@ -229,7 +237,7 @@ function renderHeader(rootPrefix, activeSection) {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11.1 11.1 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.27 5.67.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
         GitHub
       </a>
-      <a class="btn btn-primary" href="${rootPrefix}index.html#downloads">Get Pulse</a>
+      <a class="btn btn-primary" href="${rootPrefix}index.html#setup">Get started</a>
       <button class="mobile-menu-btn" type="button" data-mobile-menu aria-label="Toggle navigation" aria-expanded="false">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
@@ -241,12 +249,13 @@ function renderHeader(rootPrefix, activeSection) {
 function renderFooter(rootPrefix) {
   return `<footer class="site-footer">
   <div class="container footer-inner">
-    <div>
-      <strong>OMP Pulse</strong> · MIT Licensed · Independent companion for <a href="https://github.com/can1357/oh-my-pi" target="_blank" rel="noopener noreferrer" style="color:var(--fg-muted);text-decoration:underline">omp (Oh My Pi)</a>.
+    <div class="footer-credit">
+      <strong>OMP Pulse</strong> · MIT licence · An independent companion for <a href="https://github.com/can1357/oh-my-pi" target="_blank" rel="noopener noreferrer">omp (Oh My Pi)</a>.
     </div>
     <div class="footer-links">
+      <a href="${rootPrefix}docs/getting-started.html">Getting started</a>
       <a href="${rootPrefix}docs/index.html">Documentation</a>
-      <a href="${rootPrefix}docs/phone-mode.html">Phone Mode</a>
+      <a href="${rootPrefix}docs/phone-mode.html">Phone mode</a>
       <a href="${rootPrefix}docs/security.html">Security</a>
       <a href="${rootPrefix}docs/changelog.html">Changelog</a>
       <a href="${escapeHtml(REPO_URL)}" target="_blank" rel="noopener noreferrer">GitHub</a>
@@ -286,167 +295,204 @@ ${renderFooter(rootPrefix)}
 
 // ── Landing Page ───────────────────────────────────────────────────────────
 
+/** Inline copy markup: escapes text, then renders **bold**, `code` and [links](url). */
+function rich(text) {
+  return escapeHtml(text)
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, href) =>
+      /^https?:/.test(href)
+        ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`
+        : `<a href="${href}">${label}</a>`,
+    )
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+function renderCommandRow(id, command, prompt = "$") {
+  return `<div class="install-cmd-row">
+              <div class="install-cmd">
+                <span class="prompt-sigil" aria-hidden="true">${escapeHtml(prompt)}</span><code id="${id}">${escapeHtml(command)}</code>
+              </div>
+              <button class="copy-btn" type="button" data-copy-target="#${id}">Copy</button>
+            </div>`;
+}
+
 function buildLandingPage() {
   const unixInstall = `curl -fsSL ${RAW_MAIN}/install.sh | sh`;
   const winInstall = `irm ${RAW_MAIN}/install.ps1 | iex`;
   const cargoInstall = `cargo install --git ${REPO_URL} --locked`;
+  const asset = (name) => `${RELEASES_LATEST}/download/omp-pulse-${VERSION}-${name}`;
+  const OMP_URL = "https://github.com/can1357/oh-my-pi";
 
   const tourItems = [
     {
       id: "chat",
-      title: "Live Transcript & Work Rail",
-      tag: "Streaming",
-      desc: "Watch thoughts, file reads, inline diffs, and test runs stream at token granularity. Steer mid-turn, queue a follow-up, or dictate by voice.",
+      title: "See what it's doing, as it does it",
+      tag: "Live",
+      desc: "Every file it reads, every change it makes and every test it runs appears the moment it happens. Step in mid-task, line up your next instruction, or stop it.",
       img: "assets/media/screenshot-chat.png",
-      alt: "OMP Pulse chat screen showing expanded work rail, inline pagination reply, context ring, and composer",
+      alt: "A conversation in Pulse: the agent's steps listed above its reply, with the message box at the bottom.",
     },
     {
-      id: "drawer",
-      title: "Unified Session Drawer",
-      tag: "Navigation",
-      desc: "One gesture slides open your computer connection, project folders, Needs-you prompts, pinned sessions, recent chats, and full-transcript search.",
-      img: "assets/media/screenshot-drawer.png",
-      alt: "Left session drawer showing connected computer status, project folders, Needs you, Pinned, and Recent sessions",
-    },
-    {
-      id: "workspace",
-      title: "Workspace beside the Chat",
-      tag: "5 Tabs",
-      desc: "Inspect uncommitted git diffs, browse and edit files with conflict guards, steer subagents, check todo progress, or run commands in a terminal.",
-      img: "assets/media/screenshot-workspace.png",
-      alt: "Right workspace drawer open on Changes tab showing syntax-coloured git diff and bottom tab bar",
+      id: "notice",
+      title: "Get a tap when it needs you",
+      tag: "Notifications",
+      desc: "Pulse tells you when a reply is ready or the agent is waiting on you, with a notification even when the app is closed.",
+      img: "assets/media/screenshot-notice.png",
+      alt: 'A "Reply ready" notice naming the finished conversation, with a button to open it.',
     },
     {
       id: "ask",
-      title: "Answer Blocking Questions Anywhere",
-      tag: "Unblock",
-      desc: "Push notifications wake your phone when omp calls ask_user or finishes a long turn. Answer structured single- or multi-choice prompts in one tap.",
+      title: "Answer in one tap",
+      tag: "Questions",
+      desc: "When the agent needs a decision, the choices come to you. Pick one and it carries on, with no typing.",
       img: "assets/media/screenshot-ask.png",
-      alt: "Answer sheet presenting structured choices with Recommended badge over an active coding session",
+      alt: "A question from the agent with several choices, one marked as recommended.",
+    },
+    {
+      id: "review",
+      title: "Check the work before it lands",
+      tag: "Review",
+      desc: "See exactly what changed, open any file, run a command in a terminal, and keep an eye on helper agents and the to-do list.",
+      img: "assets/media/screenshot-workspace.png",
+      alt: "The workspace panel open on Changes, showing the lines added and removed in a file.",
+    },
+    {
+      id: "sessions",
+      title: "Every conversation, one swipe away",
+      tag: "Sessions",
+      desc: "The sessions you started at your desk are right there, grouped by project, with the ones waiting on you at the top. Search every conversation by title or by what was said.",
+      img: "assets/media/screenshot-drawer.png",
+      alt: "The side panel listing projects, conversations that need you, pinned and recent conversations.",
+    },
+    {
+      id: "plugins",
+      title: "Make it yours",
+      tag: "Plugins",
+      desc: "Add your own buttons, status chips and cards to the app, fed by commands on your computer. Or ask your agent to build one: type `/pulse-plugin` and describe what you want. Nothing runs until you approve it.",
+      img: "assets/media/screenshot-plugin.png",
+      alt: "A plugin's status chips and card inside a conversation.",
     },
   ];
 
+  const miniFeatures = [
+    ["Talk instead of typing.", "Dictate a message; your speech is turned into text on your own computer, not in the cloud."],
+    ["Switch models on the fly.", "Change the model or how hard it thinks, mid-conversation."],
+    ["Never lose a message.", "Drafts and unsent messages survive a dropped connection."],
+    ["Keep an eye on limits.", "See how much of your model provider's usage limits you have left."],
+    ["Watch-only devices.", "Pair a second device that can follow along but not send."],
+  ];
+
+  const modeCards = [
+    {
+      badge: "With your computer · Android and iPhone",
+      title: "Your computer does the work. Your phone is the remote.",
+      text: "Pulse runs quietly in the background on your Mac, Windows or Linux computer, next to omp. Your phone connects to it, so every session on that computer is a tap away, including the ones you started in your terminal.",
+      points: [
+        "Pair in seconds by scanning a QR code.",
+        "Reach it securely from anywhere with Tailscale, which is free for personal use.",
+        "Your code and conversations stay on your computer.",
+        "Works in your phone's browser too: add it to your Home Screen and it behaves like an app.",
+      ],
+      cta: "Set up with your computer →",
+      href: "docs/getting-started.html",
+    },
+    {
+      badge: "Phone only · Android",
+      title: "No computer? Run the agent on your phone.",
+      text: "Tap **Run on this phone** and Pulse sets up a complete coding workspace on the phone itself. Sign in to your model provider, clone a project, run its tests and push a fix from the train.",
+      points: [
+        "Sign in with Anthropic, OpenAI Codex, GitHub Copilot, Gemini, OpenRouter or DeepSeek, or use an API key.",
+        "Needs a 64-bit Android phone (Android 7 or newer) and about 500 MB of space.",
+        "Switch between the phone and your computers in two taps.",
+        "Done for a while? **Stop phone mode** frees the phone's resources and keeps your projects and sign-ins.",
+      ],
+      cta: "Explore phone mode →",
+      href: "docs/phone-mode.html",
+      phone: true,
+    },
+  ];
+
+  const phoneChips = [
+    "Opens and installs apps",
+    "Reads the screen",
+    "Takes screenshots",
+    "Taps, types and swipes",
+    "Uses the clipboard",
+    "Works with your files",
+  ];
+
+  const safetyCards = [
+    ["Never overwrites your terminal's work.", "If a session is open in your terminal, Pulse won't write to it behind your back. It joins once the terminal shares the session, and otherwise tells you how to share it."],
+    ["Your code stays on your computer.", "There's no Pulse server in the middle. Your phone talks to your own computer, and the agent talks straight to your model provider."],
+    ["Every device has its own key.", "Pair with a one-time code that expires in five minutes. Give a device watch-only access, and remove a lost phone from Settings at any time."],
+    ["Light when you're not looking.", "Pulse does almost nothing while no one is watching, and copes with patchy mobile signal without losing your drafts."],
+  ];
+
+  const faqItems = [
+    ["What is omp?", "omp (Oh My Pi) is an open-source coding agent that runs in your terminal. It reads your code, makes changes and runs commands, using the AI model you choose. Pulse is an independent companion app for it, not made by the omp authors."],
+    ["Do I need a computer?", "On Android, no: phone mode runs the agent on the phone. On iPhone, yes: Pulse connects to omp on your Mac, Windows or Linux computer."],
+    ["Is there an iPhone app?", "Not in the App Store. On iPhone, Pulse runs in Safari; add it to your Home Screen and it opens full-screen like an app, with notifications. Running the agent on the phone itself is Android only."],
+    ["Does my code go through your servers?", "No. There are no Pulse servers. Your phone connects to your own computer (or runs everything itself), and the agent talks straight to your model provider."],
+    ["What does it cost?", "Pulse is free and open source. You pay only for the AI model account you already use."],
+    ["Do I need Tailscale?", "To use Pulse away from home, we recommend it: it's free for personal use and gives your computer a private, secure address. A Cloudflare Tunnel works too. On home Wi-Fi without either, Pulse still works, but notifications and adding it to your Home Screen need a secure (https) address. [Networking guide](docs/networking.html)"],
+    ["Can I pick up a session that's already running in my terminal?", "Yes. You can read any session on your computer straight away. To send to one that's open in a terminal, Pulse joins it safely: by itself in tmux, kitty and herdr on Mac and Linux, and in Tern once the session is shared. Anywhere else, type `/collab` in the session once."],
+    ["Why isn't the Android app on Google Play?", "Phone mode downloads and runs code (a Linux workspace and the agent), which Play's rules don't allow. Install it from GitHub instead; updates install in place."],
+  ];
+
   const bodyHtml = `<main id="main">
-  <!-- Hero -->
+  <!-- Opening -->
   <section class="hero">
     <div class="container hero-grid">
       <div>
         <div class="eyebrow">
           <span class="pulse-dot" aria-hidden="true"></span>
-          <span>Open-source mobile companion &amp; Android runtime for omp</span>
+          <span>Free and open source · Android and iPhone</span>
         </div>
-        <h1>Keep shipping with <span class="accent-word">omp</span> from your phone.</h1>
+        <h1>Your coding agent, in your pocket.</h1>
         <p class="hero-lead">
-          Drive live desktop <strong>Oh My Pi</strong> coding sessions over authenticated WebSockets — or run <code>omp</code> and a full Alpine Linux workspace directly on an Android phone, with no computer involved.
+          Start a task at your desk and keep it moving from anywhere. Watch the agent work, answer its questions, check what it changed and tell it what to do next. No computer to hand? On Android, the agent can run on the phone itself.
         </p>
 
-        <div class="install-box" aria-label="Install OMP Pulse daemon">
-          <div class="install-tabs" role="tablist" aria-label="Install platform">
-            <button class="install-tab" type="button" role="tab" aria-selected="true" data-install-tab data-prompt="$" data-cmd="${escapeHtml(unixInstall)}">Linux &amp; macOS</button>
-            <button class="install-tab" type="button" role="tab" aria-selected="false" data-install-tab data-prompt="PS>" data-cmd="${escapeHtml(winInstall)}">Windows</button>
-            <button class="install-tab" type="button" role="tab" aria-selected="false" data-install-tab data-prompt="$" data-cmd="${escapeHtml(cargoInstall)}">From Source</button>
-          </div>
-          <div class="install-cmd-row">
-            <div class="install-cmd">
-              <span class="prompt-sigil" data-install-prompt>$</span><code id="hero-install-cmd" data-install-cmd>${escapeHtml(unixInstall)}</code>
-            </div>
-            <button class="copy-btn" type="button" data-copy-target="#hero-install-cmd">Copy</button>
-          </div>
-        </div>
-
         <div class="hero-ctas">
-          <a class="btn btn-primary btn-lg" href="${escapeHtml(APK_DIRECT)}">Download Android APK</a>
-          <a class="btn btn-secondary btn-lg" href="docs/index.html">Read the Docs</a>
+          <a class="btn btn-primary btn-lg" href="#setup">Get started</a>
+          <a class="btn btn-secondary btn-lg" href="${escapeHtml(APK_DIRECT)}">Download for Android</a>
         </div>
+        <p class="hero-note">On iPhone? Pulse runs in Safari, connected to your computer. Add it to your Home Screen and it works like an app.</p>
 
         <div class="hero-facts">
-          <span>Single Rust binary · Zero OpenSSL</span>
-          <span>·</span>
-          <span>Installable PWA + Signed arm64 APK</span>
-          <span>·</span>
-          <span>MIT Licensed</span>
+          <span>Runs on your own computer</span>
+          <span>No Pulse account, no Pulse cloud</span>
+          <span>Uses the AI model accounts you already have</span>
         </div>
+        <p class="hero-newcomer">${rich(`Pulse is built on [omp (Oh My Pi)](${OMP_URL}), an open-source coding agent that reads, writes and tests real code on your machine.`)}</p>
       </div>
 
       <div class="hero-stage">
         <div>
           <div class="phone-device">
             <div class="phone-screen">
-              <img src="assets/media/demo.gif" width="380" height="822" alt="Animated demonstration of opening a running omp session from the drawer and watching edits, Vitest output, and the final reply stream live">
+              <img src="assets/media/demo.gif" width="380" height="822" alt="Opening a running session from the side panel, then watching the agent edit a file, run its tests and write its reply.">
             </div>
           </div>
-          <div class="stage-caption">Real capture · Live turn streaming over WebSocket</div>
+          <div class="stage-caption">Recorded in the app: opening a session and watching the agent edit code and run its tests.</div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Two Ways to Run -->
-  <section class="section" id="modes">
+  <!-- What you can do -->
+  <section class="section" id="features">
     <div class="container">
       <div class="section-header">
-        <p class="section-kicker">Two ways to run</p>
-        <h2 class="section-title">Bridge your workstation, or run entirely on your phone.</h2>
+        <p class="section-kicker">What you can do</p>
+        <h2 class="section-title">Everything you'd check at your desk, from wherever you are.</h2>
         <p class="section-desc">
-          One interface serves both worlds. Pair with your laptop or workstation over Tailscale, or turn an Android phone into a self-contained coding environment.
-        </p>
-      </div>
-
-      <div class="modes-grid">
-        <article class="mode-card">
-          <div>
-            <span class="mode-badge">Desktop &amp; Server Mode</span>
-            <h3>Your computer’s sessions in your pocket</h3>
-            <p>
-              <code>omp-pulse</code> runs a lightweight Rust daemon alongside your existing <code>omp</code> installation on Linux, macOS, or Windows. Scan a one-use QR code to pair.
-            </p>
-            <ul class="mode-points">
-              <li>Watches every session in <code>~/.local/share/omp/sessions</code> without moving your workflow.</li>
-              <li>Enforces strict single-writer ownership so phone and terminal never clobber a JSONL file.</li>
-              <li>Works seamlessly behind <code>tailscale serve</code> HTTPS with Web Push notifications and offline outbox queueing.</li>
-              <li>Switch models and reasoning effort on live desktop sessions without typing slash commands.</li>
-            </ul>
-          </div>
-          <div>
-            <a class="btn btn-secondary" href="docs/configuration.html">Desktop Setup Guide →</a>
-          </div>
-        </article>
-
-        <article class="mode-card mode-card--phone">
-          <div>
-            <span class="mode-badge">Android Phone Mode · Standalone</span>
-            <h3>Full Linux workspace &amp; omp on Android</h3>
-            <p>
-              No laptop required. Choose <strong>Run on this phone</strong> in the Android app to provision a SHA-256-pinned Alpine Linux userspace via <code>proot</code> with <code>omp</code> and the Pulse daemon running locally.
-            </p>
-            <ul class="mode-points">
-              <li>Sign in to Anthropic, OpenAI Codex, GitHub Copilot, Gemini, OpenRouter, or DeepSeek right on the phone.</li>
-              <li>Clone repositories, run compilers and test suites, and edit code locally on arm64 Android 7.0+.</li>
-              <li>Optional <strong>Phone tools for the agent</strong> let <code>omp</code> inspect the screen, launch apps, read the clipboard, and automate Android tasks.</li>
-              <li>Switch between on-device mode and any saved computer in two taps.</li>
-            </ul>
-          </div>
-          <div>
-            <a class="btn btn-primary" href="docs/phone-mode.html">Explore Phone Mode →</a>
-          </div>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <!-- Interactive Product Tour -->
-  <section class="section" id="tour">
-    <div class="container">
-      <div class="section-header">
-        <p class="section-kicker">Designed for thumbs, built for real code</p>
-        <h2 class="section-title">Every surface tuned for a phone screen.</h2>
-        <p class="section-desc">
-          Not a shrunken desktop IDE and not a chat toy. Spring-driven drawers, readable inline diffs, durable drafts, and instant session switching.
+          Not a cut-down chat window. Pulse shows the agent's real work as it happens, laid out for one thumb.
         </p>
       </div>
 
       <div class="showcase-layout">
-        <div class="showcase-tabs" role="tablist" aria-label="Product surfaces">
+        <div class="showcase-tabs" role="tablist" aria-label="What you can do">
           ${tourItems
             .map(
               (item, idx) => `<button
@@ -461,7 +507,7 @@ function buildLandingPage() {
               <span>${escapeHtml(item.title)}</span>
               <span class="showcase-tab-tag">${escapeHtml(item.tag)}</span>
             </div>
-            <p class="showcase-tab-desc">${escapeHtml(item.desc)}</p>
+            <p class="showcase-tab-desc">${rich(item.desc)}</p>
           </button>`,
             )
             .join("\n          ")}
@@ -481,172 +527,283 @@ function buildLandingPage() {
             .join("\n          ")}
         </div>
       </div>
+
+      <ul class="feature-strip">
+        ${miniFeatures
+          .map(
+            ([title, line]) => `<li class="feature-mini">
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(line)}</span>
+        </li>`,
+          )
+          .join("\n        ")}
+      </ul>
     </div>
   </section>
 
-  <!-- Android Phone Mode & Agent Tools Deep Dive -->
-  <section class="section" id="phone-mode">
+  <!-- Two ways to use it -->
+  <section class="section" id="modes">
+    <div class="container">
+      <div class="section-header">
+        <p class="section-kicker">Two ways to use it</p>
+        <h2 class="section-title">Use your computer, or just your phone.</h2>
+        <p class="section-desc">
+          The same app either way. Connect to the computer where you already run omp, or run everything on an Android phone.
+        </p>
+      </div>
+
+      <div class="modes-grid">
+        ${modeCards
+          .map(
+            (card) => `<article class="mode-card${card.phone ? " mode-card--phone" : ""}">
+          <div>
+            <span class="mode-badge">${escapeHtml(card.badge)}</span>
+            <h3>${escapeHtml(card.title)}</h3>
+            <p>${rich(card.text)}</p>
+            <ul class="mode-points">
+              ${card.points.map((point) => `<li>${rich(point)}</li>`).join("\n              ")}
+            </ul>
+          </div>
+          <div>
+            <a class="btn ${card.phone ? "btn-primary" : "btn-secondary"}" href="${card.href}">${escapeHtml(card.cta)}</a>
+          </div>
+        </article>`,
+          )
+          .join("\n        ")}
+      </div>
+    </div>
+  </section>
+
+  <!-- Let the agent use your phone -->
+  <section class="section" id="phone-tools">
     <div class="container android-spotlight">
       <div>
-        <p class="section-kicker">Android Native Shell + On-Device Agent</p>
-        <h2 class="section-title">An agent that lives on your phone — and can operate it.</h2>
+        <p class="section-kicker">Phone tools for the agent</p>
+        <h2 class="section-title">An agent that can use your phone, when you let it.</h2>
         <p class="section-desc">
-          The Capacitor Android APK bundles a static <code>aarch64-musl</code> daemon binary alongside Termux <code>proot</code>, aligned for both 4 KB and Android 15+ 16 KB page kernels.
+          ${rich("Turn on **Phone tools for the agent** and the agent can open and install apps, read what's on screen, take screenshots, tap, type and swipe, and use the clipboard. It's off by default: until you switch it on, the agent works only inside its own workspace.")}
         </p>
 
-        <div class="tool-chips" aria-label="On-device capabilities">
-          <span class="tool-chip">Alpine Linux + git + ripgrep</span>
-          <span class="tool-chip">SHA-256 pinned runtime</span>
-          <span class="tool-chip">Screen hierarchy &amp; tap/swipe</span>
-          <span class="tool-chip">Shared storage &amp; APK install</span>
-          <span class="tool-chip">Native notification stream</span>
-          <span class="tool-chip">On-device / provider OAuth</span>
+        <div class="tool-chips" aria-label="What the agent can do on your phone">
+          ${phoneChips.map((chip) => `<span class="tool-chip">${escapeHtml(chip)}</span>`).join("\n          ")}
         </div>
 
         <div class="callout-note">
-          <strong>Explicit permission gates.</strong> By default, the phone agent works strictly inside its Linux workspace. Enabling <em>Settings › Phone access › Phone tools for the agent</em> exposes the <code>android</code> CLI and <code>phone</code> MCP tool server, gated by Android’s own storage, package-install, and accessibility permissions.
+          ${rich("**You stay in charge.** Each ability sits behind Android's own permission, granted in **Settings › Phone access**. There is no approval per action, and the agent acts as the Pulse app, so it can do anything you have allowed the app to do. [Read the security notes](docs/security.html) before you switch it on.")}
         </div>
       </div>
 
       <div class="phone-pair">
         <div class="phone-device">
           <div class="phone-screen">
-            <img src="assets/media/screenshot-phone-mode.png" width="412" height="892" loading="lazy" alt="Android first-run screen offering Run on this phone or Connect a computer">
+            <img src="assets/media/screenshot-phone-mode.png" width="412" height="892" loading="lazy" alt="The Android app's first screen, offering Run on this phone or Connect a computer.">
           </div>
         </div>
         <div class="phone-device">
           <div class="phone-screen">
-            <img src="assets/media/screenshot-phone-tools.png" width="412" height="892" loading="lazy" alt="Settings Phone access screen showing Phone tools for the agent switch and Android permissions">
+            <img src="assets/media/screenshot-phone-tools.png" width="412" height="892" loading="lazy" alt="Settings › Phone access, with the Phone tools for the agent switch and the Android permissions it uses.">
           </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Architecture & Reliability -->
-  <section class="section" id="architecture">
+  <!-- Set up in three steps -->
+  <section class="section" id="setup">
     <div class="container">
       <div class="section-header">
-        <p class="section-kicker">Engineering &amp; Safety</p>
-        <h2 class="section-title">Four live producers, one bounded fan-out hub.</h2>
+        <p class="section-kicker">Get started</p>
+        <h2 class="section-title">Set up in three steps.</h2>
         <p class="section-desc">
-          <code>omp</code> rewrites session files wholesale from memory, so two simultaneous writers would corrupt history. OMP Pulse arbitrates ownership before a single byte is written.
+          ${rich(`You'll need [omp](${OMP_URL}) working on your computer first. Then:`)}
         </p>
       </div>
 
-      <div class="arch-diagram" aria-label="Architecture data flow">
-<pre><code>phone ──HTTPS / WSS──▶ server/http.rs ──▶ server/ws.rs (bounded hub) ──▶ phone
-                             │                 ▲   ▲   ▲   ▲
-                             │                 │   │   │   └── omp/collab.rs   (desktop /collab relay, token stream)
-                             │                 │   │   └────── omp/bridge.rs   (desktop extension, token stream)
-                             │                 │   └────────── omp/child.rs    (daemon rpc-ui pool, token stream)
-                             └────────────────▶│               sessions/watcher.rs (JSONL file tail, zero-idle read)</code></pre>
+      <ol class="setup-steps">
+        <li class="setup-step">
+          <span class="step-num" aria-hidden="true">1</span>
+          <div class="step-body">
+            <h3>Install Pulse on your computer.</h3>
+            <div class="install-box" aria-label="Install OMP Pulse on your computer">
+              <div class="install-tabs" role="tablist" aria-label="Install platform">
+                <button class="install-tab" type="button" role="tab" aria-selected="true" data-install-tab data-prompt="$" data-cmd="${escapeHtml(unixInstall)}">Mac &amp; Linux</button>
+                <button class="install-tab" type="button" role="tab" aria-selected="false" data-install-tab data-prompt="PS>" data-cmd="${escapeHtml(winInstall)}">Windows</button>
+                <button class="install-tab" type="button" role="tab" aria-selected="false" data-install-tab data-prompt="$" data-cmd="${escapeHtml(cargoInstall)}">From source</button>
+              </div>
+              <div class="install-cmd-row">
+                <div class="install-cmd">
+                  <span class="prompt-sigil" data-install-prompt>$</span><code id="setup-install-cmd" data-install-cmd>${escapeHtml(unixInstall)}</code>
+                </div>
+                <button class="copy-btn" type="button" data-copy-target="#setup-install-cmd">Copy</button>
+              </div>
+            </div>
+            <p class="step-note">The installer checks the download against the published checksums.</p>
+          </div>
+        </li>
+        <li class="setup-step">
+          <span class="step-num" aria-hidden="true">2</span>
+          <div class="step-body">
+            <h3>Start it.</h3>
+            <div class="install-box">
+              ${renderCommandRow("setup-start-cmd", "omp-pulse setup")}
+              ${renderCommandRow("setup-service-cmd", "omp-pulse service install")}
+            </div>
+            <p class="step-note">Setup prepares Pulse and connects it to omp. The service starts Pulse in the background whenever you log in.</p>
+          </div>
+        </li>
+        <li class="setup-step">
+          <span class="step-num" aria-hidden="true">3</span>
+          <div class="step-body">
+            <h3>Pair your phone.</h3>
+            <div class="install-box">
+              ${renderCommandRow("setup-pair-cmd", "omp-pulse pair")}
+            </div>
+            <p class="step-note">Scan the QR code with your phone, or type the code into the Android app. Each code works once and expires after five minutes.</p>
+          </div>
+        </li>
+      </ol>
+
+      <div class="setup-asides">
+        <div class="callout-note">${rich("**Away from home?** Put Pulse behind Tailscale with one command and you get a private, secure address that works anywhere. [Networking guide](docs/networking.html)")}</div>
+        <div class="callout-note">${rich("**Phone only?** Skip all of this: install the Android app and tap **Run on this phone**.")}</div>
       </div>
 
-      <div class="arch-grid">
-        <div class="arch-card">
-          <div class="arch-card-kicker">01 · Ownership Guard</div>
-          <h3>Single-writer guarantee</h3>
-          <p>Detects live terminal owners via process descriptors, bridge sockets, and terminal multiplexers. Refuses unsafe writes and guides you to <code>/collab</code> instead of guessing.</p>
-        </div>
-        <div class="arch-card">
-          <div class="arch-card-kicker">02 · Bounded Memory &amp; I/O</div>
-          <h3>Zero idle parse, capped queues</h3>
-          <p>The file watcher sleeps when no client listens. Each WebSocket client is bounded by frame count and byte budget; slow links resync cleanly via sequence-keyed deltas.</p>
-        </div>
-        <div class="arch-card">
-          <div class="arch-card-kicker">03 · Pure-Rust Crypto</div>
-          <h3>Device-scoped credentials</h3>
-          <p>Five-minute single-use pairing codes mint revocable per-device tokens stored as SHA-256 digests. RFC 8291 Web Push encryption runs in pure Rust with zero OpenSSL dependency.</p>
-        </div>
+      <div class="section-actions">
+        <a class="btn btn-secondary" href="docs/getting-started.html">Full walkthrough →</a>
       </div>
     </div>
   </section>
 
-  <!-- Downloads -->
+  <!-- Safe by design -->
+  <section class="section" id="safety">
+    <div class="container">
+      <div class="section-header">
+        <p class="section-kicker">Safe by design</p>
+        <h2 class="section-title">Built to be trusted with your code.</h2>
+        <p class="section-desc">
+          Pulse is a remote control for an agent that edits real files, so it's careful about who can do what, and when.
+        </p>
+      </div>
+
+      <div class="safety-grid">
+        ${safetyCards
+          .map(
+            ([title, text]) => `<div class="safety-card">
+          <h3>${escapeHtml(title)}</h3>
+          <p>${escapeHtml(text)}</p>
+        </div>`,
+          )
+          .join("\n        ")}
+      </div>
+
+      <div class="section-actions">
+        <a class="btn btn-secondary" href="docs/architecture.html">How Pulse works under the hood →</a>
+        <a class="btn btn-secondary" href="docs/security.html">Security model →</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download -->
   <section class="section" id="downloads">
     <div class="container">
       <div class="section-header">
-        <p class="section-kicker">Get Started</p>
+        <p class="section-kicker">Download</p>
         <h2 class="section-title">Download OMP Pulse v${escapeHtml(VERSION)}</h2>
         <p class="section-desc">
-          Every release publishes SHA-256 checksums, static Linux musl archives, macOS and Windows binaries, and a signed Android arm64 APK.
+          Free and open source under the MIT licence. The Android app is signed, and every download has a published checksum.
         </p>
       </div>
 
+      <h3 class="download-group-title">For your computer</h3>
+      <div class="downloads-grid downloads-grid--three">
+        <div class="download-card">
+          <div>
+            <h4>Mac</h4>
+            <p class="download-text">Apple Silicon and Intel. Runs in the background when you log in.</p>
+          </div>
+          <div class="download-links">
+            <a class="asset-pill" href="${escapeHtml(asset("aarch64-apple-darwin.tar.gz"))}">Apple Silicon ↓</a>
+            <a class="asset-pill" href="${escapeHtml(asset("x86_64-apple-darwin.tar.gz"))}">Intel ↓</a>
+          </div>
+          <a class="download-install" href="#setup">Install with one command →</a>
+        </div>
+
+        <div class="download-card">
+          <div>
+            <h4>Windows</h4>
+            <p class="download-text">Windows 10 and 11. Runs in the background when you log in.</p>
+          </div>
+          <div class="download-links">
+            <a class="asset-pill" href="${escapeHtml(asset("x86_64-pc-windows-msvc.zip"))}">Windows (x64) ↓</a>
+            <a class="asset-pill" href="docs/windows.html">Windows guide →</a>
+          </div>
+          <a class="download-install" href="#setup">Install with one command →</a>
+        </div>
+
+        <div class="download-card">
+          <div>
+            <h4>Linux</h4>
+            <p class="download-text">Any distribution, x64 or ARM64. Runs in the background when you log in.</p>
+          </div>
+          <div class="download-links">
+            <a class="asset-pill" href="${escapeHtml(asset("x86_64-unknown-linux-musl.tar.gz"))}">x64 ↓</a>
+            <a class="asset-pill" href="${escapeHtml(asset("aarch64-unknown-linux-musl.tar.gz"))}">ARM64 ↓</a>
+          </div>
+          <a class="download-install" href="#setup">Install with one command →</a>
+        </div>
+      </div>
+
+      <h3 class="download-group-title">For your phone</h3>
       <div class="downloads-grid">
         <div class="download-card">
-          <div class="download-card-head">
-            <div>
-              <h3>Android App (Phone Mode + Remote)</h3>
-              <div class="download-meta">arm64-v8a · Android 7.0+ · 4 KB &amp; 16 KB page aligned</div>
-            </div>
+          <div>
+            <h4>Android</h4>
+            <p class="download-text">The full app: connect to your computer, or run everything on the phone. 64-bit, Android 7 or newer. Updates install in place, and Obtainium can track them for you.</p>
           </div>
-          <p style="margin:0;color:var(--fg-muted);font-size:0.9rem">
-            Signed APK with embedded web client, native background notification stream, and standalone Alpine + <code>omp</code> runtime. Track updates automatically with Obtainium.
-          </p>
           <div class="download-links">
-            <a class="asset-pill" href="${escapeHtml(APK_DIRECT)}">omp-pulse.apk ↓</a>
-            <a class="asset-pill" href="${escapeHtml(RELEASES_LATEST)}" target="_blank" rel="noopener noreferrer">SHA256SUMS ↗</a>
+            <a class="btn btn-primary" href="${escapeHtml(APK_DIRECT)}">Download the Android app</a>
           </div>
         </div>
 
         <div class="download-card">
-          <div class="download-card-head">
-            <div>
-              <h3>Linux Daemon</h3>
-              <div class="download-meta">Static musl · Zero runtime dependencies · systemd user service</div>
-            </div>
-          </div>
-          <p style="margin:0;color:var(--fg-muted);font-size:0.9rem">
-            Single self-contained binary with embedded PWA. Runs on any glibc or musl distribution.
-          </p>
-          <div class="download-links">
-            <a class="asset-pill" href="${escapeHtml(RELEASES_LATEST)}/download/omp-pulse-${escapeHtml(VERSION)}-x86_64-unknown-linux-musl.tar.gz">x86_64 musl (.tar.gz) ↓</a>
-            <a class="asset-pill" href="${escapeHtml(RELEASES_LATEST)}/download/omp-pulse-${escapeHtml(VERSION)}-aarch64-unknown-linux-musl.tar.gz">aarch64 musl (.tar.gz) ↓</a>
+          <div>
+            <h4>iPhone and other phones</h4>
+            <p class="download-text">${rich("No download needed. Open your computer's Pulse address in Safari and choose **Add to Home Screen**. Notifications work once it's on your Home Screen.")}</p>
           </div>
         </div>
+      </div>
 
-        <div class="download-card">
-          <div class="download-card-head">
-            <div>
-              <h3>macOS Daemon</h3>
-              <div class="download-meta">Apple Silicon &amp; Intel · launchd background agent</div>
-            </div>
-          </div>
-          <p style="margin:0;color:var(--fg-muted);font-size:0.9rem">
-            Install via <code>install.sh</code>, run <code>omp-pulse setup</code>, and expose over <code>tailscale serve</code>.
-          </p>
-          <div class="download-links">
-            <a class="asset-pill" href="${escapeHtml(RELEASES_LATEST)}/download/omp-pulse-${escapeHtml(VERSION)}-aarch64-apple-darwin.tar.gz">Apple Silicon (.tar.gz) ↓</a>
-            <a class="asset-pill" href="${escapeHtml(RELEASES_LATEST)}/download/omp-pulse-${escapeHtml(VERSION)}-x86_64-apple-darwin.tar.gz">Intel x86_64 (.tar.gz) ↓</a>
-          </div>
-        </div>
+      <div class="section-actions">
+        <a class="btn btn-secondary" href="${escapeHtml(RELEASES_LATEST)}" target="_blank" rel="noopener noreferrer">All release files and checksums →</a>
+      </div>
+    </div>
+  </section>
 
-        <div class="download-card">
-          <div class="download-card-head">
-            <div>
-              <h3>Windows Daemon</h3>
-              <div class="download-meta">Windows 10 / 11 x86_64 · Task Scheduler service</div>
-            </div>
-          </div>
-          <p style="margin:0;color:var(--fg-muted);font-size:0.9rem">
-            Native MSVC executable importing only system DLLs. Install via <code>install.ps1</code> or standalone zip.
-          </p>
-          <div class="download-links">
-            <a class="asset-pill" href="${escapeHtml(RELEASES_LATEST)}/download/omp-pulse-${escapeHtml(VERSION)}-x86_64-pc-windows-msvc.zip">Windows x64 (.zip) ↓</a>
-            <a class="asset-pill" href="docs/windows.html">Windows Guide →</a>
-          </div>
-        </div>
+  <!-- Questions -->
+  <section class="section" id="faq">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Questions</h2>
+      </div>
+
+      <div class="faq-list">
+        ${faqItems
+          .map(
+            ([question, answer]) => `<details class="faq-item">
+          <summary>${escapeHtml(question)}</summary>
+          <p class="faq-answer">${rich(answer)}</p>
+        </details>`,
+          )
+          .join("\n        ")}
       </div>
     </div>
   </section>
 </main>`;
 
   return renderDocument({
-    title: "OMP Pulse — Mobile Interface & On-Device Android Runtime for omp",
+    title: "OMP Pulse: your coding agent, in your pocket",
     description:
-      "Keep working with Oh My Pi (omp) from your phone. Single-binary Rust daemon and PWA for desktop sessions, plus a standalone Android Linux runtime.",
+      "Watch your coding agent work, answer its questions and check its changes from your phone, on Android or iPhone. Or run it on your Android phone with no computer at all. Free and open source.",
     rootPrefix: "",
     activeSection: "home",
     bodyHtml,
@@ -748,7 +905,7 @@ function buildDocPage(pageIndex) {
 // ── Social OpenGraph Card (SVG) ────────────────────────────────────────────
 
 function buildOgCardSvg() {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="OMP Pulse — Keep working with omp from your phone">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="OMP Pulse — Your coding agent, in your pocket">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b0d13"/>
@@ -774,11 +931,11 @@ function buildOgCardSvg() {
   </g>
 
   <text x="88" y="256" fill="#f3f4f8" font-family="ui-sans-serif, -apple-system, Inter, sans-serif" font-size="64" font-weight="700" letter-spacing="-2">OMP Pulse</text>
-  <text x="88" y="324" fill="#b19fff" font-family="ui-sans-serif, -apple-system, Inter, sans-serif" font-size="34" font-weight="500" letter-spacing="-0.6">Keep working with omp from your phone.</text>
-  <text x="88" y="392" fill="#9aa2b2" font-family="ui-sans-serif, -apple-system, Inter, sans-serif" font-size="24">Single-binary Rust daemon + PWA for desktop sessions,</text>
-  <text x="88" y="428" fill="#9aa2b2" font-family="ui-sans-serif, -apple-system, Inter, sans-serif" font-size="24">or run omp natively on Android with an Alpine Linux workspace.</text>
+  <text x="88" y="324" fill="#b19fff" font-family="ui-sans-serif, -apple-system, Inter, sans-serif" font-size="34" font-weight="500" letter-spacing="-0.6">Your coding agent, in your pocket.</text>
+  <text x="88" y="392" fill="#9aa2b2" font-family="ui-sans-serif, -apple-system, Inter, sans-serif" font-size="24">Follow, answer and steer omp from your phone,</text>
+  <text x="88" y="428" fill="#9aa2b2" font-family="ui-sans-serif, -apple-system, Inter, sans-serif" font-size="24">or run it on Android with no computer at all.</text>
 
-  <text x="88" y="524" fill="#666f82" font-family="ui-monospace, Menlo, monospace" font-size="20">MIT Licensed · Zero OpenSSL · github.com/${escapeHtml(REPO_SLUG)}</text>
+  <text x="88" y="524" fill="#666f82" font-family="ui-monospace, Menlo, monospace" font-size="20">Free and open source · github.com/${escapeHtml(REPO_SLUG)}</text>
 </svg>
 `;
 }
@@ -807,6 +964,8 @@ export function buildSite(outDir = DIST) {
   const mediaFiles = [
     "demo.gif",
     "screenshot-chat.png",
+    "screenshot-notice.png",
+    "screenshot-plugin.png",
     "screenshot-drawer.png",
     "screenshot-workspace.png",
     "screenshot-ask.png",

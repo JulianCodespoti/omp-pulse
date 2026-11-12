@@ -7,8 +7,10 @@
 //   screenshot-ask.png          desktop ask answer sheet opened over a conversation
 //   screenshot-phone-mode.png   Android first-run screen ("Run on this phone" / "Connect a computer")
 //   screenshot-phone-tools.png  Android Settings › Phone access: Phone tools for the agent & permissions
+//   screenshot-notice.png       the in-app "Reply ready" notice naming another conversation that just finished, with Open
+//   screenshot-plugin.png       plugins in a conversation: status chips beside the composer and a card under a test run
 //   demo.gif                    open a working session from the drawer and watch the live turn stream, edit, test and finish
-//   node scripts/docs/capture-readme-media.mjs                     # all seven
+//   node scripts/docs/capture-readme-media.mjs                     # all nine
 //   node scripts/docs/capture-readme-media.mjs --only chat,gif     # subset by shot key
 //   node scripts/docs/capture-readme-media.mjs --out /tmp/media    # write somewhere else
 //
@@ -21,7 +23,7 @@
 // the GIF and pngquant or ImageMagick (`magick`) to compress PNGs cleanly.
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -123,6 +125,17 @@ const TEST_OUTPUT = [
   "      Tests  9 passed (9)",
 ];
 
+// A second tool run, in the "Fix flaky timezone test in CI" conversation, so the plugin shot has a call to draw a card for.
+const DUE_DATES_OUTPUT = [
+  "> todo-api@1.4.0 test",
+  "> vitest run due-dates",
+  "",
+  " ✓ test/due-dates.spec.ts (6 tests) 148ms",
+  "",
+  " Test Files  1 passed (1)",
+  "      Tests  6 passed (6)",
+].join("\n");
+
 const FINAL_REPLY =
   "Done. `GET /todos` now returns cursor-paginated pages:\n\n" +
   "- **`limit`** defaults to `20` and caps at `100`\n" +
@@ -166,6 +179,8 @@ const SESSIONS = [
   ]],
   ["Fix flaky timezone test in CI", "todo-api", 190, [
     user(200, "test/due-dates.spec.ts fails on CI about once a day. Why?"),
+    reply(195, [{ type: "text", text: "A once-a-day failure smells like a date near midnight. Let me run the suite in a few timezones to see whether it depends on where the runner is." }, { type: "toolCall", id: "call_tz", name: "bash", intent: "Running the due-dates tests", arguments: { command: "TZ=UTC npm test -- due-dates" } }], 45),
+    result(194, "call_tz", "bash", DUE_DATES_OUTPUT),
     reply(190, [{ type: "text", text: "It builds dates with the runner's local timezone. Pinned `TZ=UTC` in the test setup and used `Date.UTC` in the fixture." }], 700),
   ]],
   ["Why is the Docker image 1.2 GB?", "weather-cli", 1_500, [
@@ -469,6 +484,88 @@ const CHANGES_PAYLOAD = {
   ],
 };
 
+// ── Plugins (web/src/domain/plugins.ts PluginInfo, as scripts/ui/states/recipes.mjs builds them) ──
+
+const pluginInfo = (extra) => ({ description: "", status: "enabled", slots: [], sources: [], linked: true, permissions: [], tools: [], messages: [], options: [], optionValues: {}, actions: [], ...extra });
+const HOST_USAGE = pluginInfo({
+  id: "host-usage", name: "Host usage", version: "0.1.0", description: "Load and memory of the computer running the daemon", hash: "a".repeat(64),
+  slots: ["drawer", "composer.status", "page"],
+  sources: [{ id: "load", command: ["cat", "/proc/loadavg"], intervalS: 10, timeoutS: 5 }],
+});
+const PROVIDER_USAGE = pluginInfo({
+  id: "provider-usage", name: "Provider usage", version: "0.1.0", description: "How much of each model provider's usage limits you have used", hash: "3".repeat(64),
+  slots: ["composer.status", "drawer", "page"],
+  sources: [{ id: "usage", command: ["omp", "usage", "--json", "--redact"], intervalS: 300, timeoutS: 30 }],
+  options: [
+    { id: "warn_at", label: "Warn from this used percentage", type: "choice", choices: ["70", "80", "90"], default: "80" },
+    { id: "composer_chip", label: "Show a chip beside the composer", type: "bool", choices: [], default: true },
+  ],
+  optionValues: { warn_at: "80", composer_chip: true },
+});
+const TEST_SUMMARY = pluginInfo({
+  id: "test-summary", name: "Test summary", version: "0.1.0", description: "Draws test runs as a summary card", hash: "5".repeat(64),
+  slots: ["transcript.tool"], tools: ["bash"],
+});
+/** A transcript.tool card for a Vitest run: counts and time read from the tool's output. */
+const TEST_SUMMARY_SCRIPT = `
+pulse.slot("transcript.tool", async (ctx) => {
+  const call = ctx && ctx.call;
+  const out = String((call && call.output) || "");
+  const passed = out.match(/Tests\\s+(\\d+) passed \\((\\d+)\\)/);
+  if (!passed) return null;
+  const time = out.match(/\\((\\d+) tests?\\) (\\d+)ms/);
+  return pulse.ui.col([
+    pulse.ui.kv([
+      { key: "Suite", value: (out.match(/test\\/([\\w-]+)\\.spec/) || [])[1] || "tests" },
+      { key: "Passed", value: passed[1] + " of " + passed[2], tone: "success" },
+      { key: "Time", value: time ? time[2] + " ms" : "n/a" },
+    ]),
+    pulse.ui.progress(Number(passed[1]) / Number(passed[2]), "All tests passing", { tone: "success" }),
+  ]);
+});
+`;
+/** `omp usage --json --redact` for one provider with its 5 hour window at 84%; times are relative to the real clock. */
+function providerUsageReading() {
+  const t = Date.now();
+  const limit = (label, id, used, resetsInMin) => ({ label, window: { id, resetsAt: t + resetsInMin * 60_000 + 15_000 }, amount: { usedFraction: used } });
+  return JSON.stringify({ reports: [{ provider: "anthropic", fetchedAt: t - 2 * 60_000, limits: [limit("5 hour window", "5h", 0.84, 95), limit("Weekly", "7d", 0.42, 3 * 24 * 60)] }] });
+}
+/**
+ * Serve plugins to the running app. Stub bodies are JSON-only, so a plugin's
+ * script cannot be a stub: once the app has booted, wrap window.fetch for the
+ * plugin routes (the capture daemon has none). Same wiring as servePlugins in
+ * scripts/ui/states/recipes.mjs.
+ */
+async function servePlugins(ui, { plugins, scripts, readings }) {
+  await ui.quiet();
+  await ui.page.evaluate(({ scripts, plugins, readings, at }) => {
+    const previous = window.fetch;
+    const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    window.fetch = (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href);
+      const method = String(init?.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
+      if (method === "GET") {
+        if (url.pathname === "/api/plugins") return Promise.resolve(json({ ok: true, plugins }));
+        const script = url.pathname.match(/^\/api\/plugins\/([^/]+)\/client\.js$/)?.[1];
+        if (script && script in scripts) {
+          return Promise.resolve(new Response(scripts[script], { status: 200, headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" } }));
+        }
+        const source = url.pathname.match(/^\/api\/plugins\/([^/]+)\/sources\/([^/]+)$/);
+        if (source && `${source[1]}/${source[2]}` in readings) {
+          return Promise.resolve(json({ ok: true, reading: { ok: true, text: readings[`${source[1]}/${source[2]}`], exitCode: 0, fetchedAtMs: at, truncated: false } }));
+        }
+      }
+      return previous(input, init);
+    };
+  }, { scripts, plugins, readings, at: Date.now() });
+}
+/** visibilitychange makes the app reload the plugin catalogue; repeat until `selector` shows. */
+const nudgeUntil = (ui, selector) =>
+  ui.page.waitForFunction((sel) => {
+    document.dispatchEvent(new Event("visibilitychange"));
+    return !!document.querySelector(sel);
+  }, { polling: 500, timeout: 20_000 }, selector);
+
 // ── Shots ───────────────────────────────────────────────────────────────────
 
 const SHOTS = {
@@ -649,6 +746,84 @@ const SHOTS = {
       await ui.close();
     }
   },
+
+  // The notice comes from the app's own reply watcher (App.tsx): another
+  // conversation is seen running in the listing, then idle, and the toast
+  // fires. Only the listing responses are scripted; the toast is the real UI.
+  async notice(browser, env, out) {
+    const astro = env.row("Migrate the blog to Astro 5");
+    const ui = await openPage(browser, env, {
+      hash: env.chatHash(MAIN),
+      stubs: [env.listingStub((r) => (r.path === astro.path ? { sessionState: env.runningState(r, CLOCK, { kind: "writing" }) } : null))],
+    });
+    try {
+      await ui.chat();
+      // Open the settled "Worked for …" group, as the chat shot does, so the conversation behind the notice is full.
+      await ui.click("[data-testid='turn-work-title']");
+      await ui.el("[data-testid='rail-act'][data-category='edit'] [data-testid='rail-chip']");
+      await ui.quiet();
+      // The listing the app polls next: the same rows, the Astro migration's turn now over.
+      const finished = env.listing.map((r) => r.path === astro.path ? { ...r, sessionState: { ...r.sessionState, revision: r.sessionState.revision + 200, observedAt: CLOCK } } : r);
+      await ui.page.evaluate((body) => {
+        const previous = window.fetch;
+        window.fetch = (input, init) => {
+          const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href);
+          const method = String(init?.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
+          if (method === "GET" && url.pathname === "/api/sessions") {
+            return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }));
+          }
+          return previous(input, init);
+        };
+      }, { sessions: finished, projects: [] });
+      // An open chat re-reads the listing every 10 s while another session is known to be running.
+      await ui.el("[data-slot='toast'] [data-slot='notice-pill']", { timeout: 40_000 });
+      await ui.text("Reply ready");
+      await ui.text(astro.title);
+      await ui.el("[data-slot='toast'] button");
+      await ui.page.evaluate(() => {
+        const scroller = document.querySelector(".chat-scroll");
+        if (scroller) scroller.scrollTop = scroller.scrollHeight;
+      });
+      await scrollQuiet(ui.page);
+      await ui.page.evaluate(() => document.querySelector("[data-testid='jump-nav']")?.style.setProperty("visibility", "hidden", "important"));
+      await still(ui, join(out, "screenshot-notice.png"));
+    } finally {
+      await ui.close();
+    }
+  },
+
+  // Two shipped-style plugins running in their sandbox, plus a small card
+  // plugin for the test run. Usage figures and load are invented.
+  async plugin(browser, env, out) {
+    const ui = await openPage(browser, env, { hash: env.chatHash("Fix flaky timezone test") });
+    try {
+      await ui.chat();
+      await ui.text("in the test setup");
+      await servePlugins(ui, {
+        plugins: [HOST_USAGE, PROVIDER_USAGE, TEST_SUMMARY],
+        scripts: {
+          "host-usage": readFileSync(join(ROOT, "examples/plugins/host-usage/client.js"), "utf8"),
+          "provider-usage": readFileSync(join(ROOT, "examples/plugins/provider-usage/client.js"), "utf8"),
+          "test-summary": TEST_SUMMARY_SCRIPT,
+        },
+        readings: { "host-usage/load": "0.52 0.58 0.59 1/467 12345\n", "provider-usage/usage": providerUsageReading() },
+      });
+      const card = "[data-testid='plugin-tool-card'][data-plugin='test-summary']";
+      const chip = "[data-testid='plugin-slot-composer.status'] [data-testid='plugin-chip']";
+      await nudgeUntil(ui, card);
+      await nudgeUntil(ui, chip);
+      await ui.quiet();
+      await ui.page.evaluate(() => {
+        const scroller = document.querySelector(".chat-scroll");
+        if (scroller) scroller.scrollTop = scroller.scrollHeight;
+      });
+      await scrollQuiet(ui.page);
+      await ui.page.evaluate(() => document.querySelector("[data-testid='jump-nav']")?.style.setProperty("visibility", "hidden", "important"));
+      await still(ui, join(out, "screenshot-plugin.png"));
+    } finally {
+      await ui.close();
+    }
+  },
 };
 
 const OUTPUT_FILES = [
@@ -659,6 +834,8 @@ const OUTPUT_FILES = [
   "screenshot-ask.png",
   "screenshot-phone-mode.png",
   "screenshot-phone-tools.png",
+  "screenshot-notice.png",
+  "screenshot-plugin.png",
 ];
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -698,7 +875,7 @@ async function main(argv) {
     const when = new Date(CLOCK - 3 * 60_000);
     utimesSync(files[MAIN], when, when);
     env = makeEnv({ base, token, appUrl: `${base}/app/`, listing: await listing(base, token, (rows) => ready(rows) && rows.find((r) => r.title === MAIN)?.revision !== before) });
-    for (const name of ["drawer", "chat", "workspace", "ask"].filter((n) => only.includes(n))) {
+    for (const name of ["drawer", "chat", "workspace", "ask", "notice", "plugin"].filter((n) => only.includes(n))) {
       await SHOTS[name](browser, env, out);
     }
   } finally {
