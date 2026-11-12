@@ -78,6 +78,21 @@
     });
   }
 
+  // The film: the markup ships native controls so it plays without script; with script the
+  // poster gets one large play button instead, and the controls return on the first press.
+  const film = document.querySelector("[data-film]");
+  const filmPlay = document.querySelector("[data-film-play]");
+  if (film instanceof HTMLVideoElement && filmPlay) {
+    film.controls = false;
+    filmPlay.hidden = false;
+    filmPlay.addEventListener("click", () => {
+      filmPlay.hidden = true;
+      film.controls = true;
+      // play() rejects when the browser refuses; the controls are there to try again.
+      film.play().catch(() => {});
+    });
+  }
+
   // Hero demo video. Reduced motion means it does not autoplay: it rests on its
   // poster. The loop runs past five seconds, so a pause control is always offered
   // (WCAG 2.2.2); the button's pressed state is the video's paused state, read

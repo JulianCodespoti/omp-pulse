@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Brand colours, radii and fonts live in one file, `brand/tokens.json`. `scripts/brand/sync-tokens.mjs` carries them into the website, the social card, the Android colours, the README badge and the icon, and the gate fails when any of them drift. The [brand guide](docs/contributing/brand.md) covers the name, colours, type and assets.
 - The website sets its text in Geist, plays the hero demo as a sharper, smaller video instead of a GIF (with a pause button, and still on its first frame when reduced motion is on), and has PNG and Apple touch icons.
 - The README opens with one composed image of three framed phones (Reply ready, a question, the diff) that reads on GitHub's light and dark themes, instead of three raw screenshots; `scripts/docs/render-brand-images.mjs` renders it beside the social card.
+- The website has a 25-second film after its opening: one violet pulse line carries a task from the terminal to the phone (a question answered in one tap, the reply ready, the diff checked, the next instruction sent) and folds into the icon. It downloads only when you press play (4.9 MB MP4, 3.3 MB WebM), and plays with native controls when script is off.
+- The UI state catalogue has the first-run "Setting up omp" screen (`onboarding-phone-setting-up`).
 
 ### Fixed
 - A notice with a long conversation title (such as "Reply ready") truncates the title instead of pushing the notice and its Open button past the edge of the screen.
