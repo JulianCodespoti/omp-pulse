@@ -78,6 +78,43 @@
     });
   }
 
+  // Hero demo video. Reduced motion means it does not autoplay: it rests on its
+  // poster. The loop runs past five seconds, so a pause control is always offered
+  // (WCAG 2.2.2); the button's pressed state is the video's paused state, read
+  // from the video's own events so a browser that blocks or pauses autoplay
+  // (data saver, low power mode) is reflected too.
+  const heroVideo = document.querySelector("[data-hero-video]");
+  const videoToggle = document.querySelector("[data-video-toggle]");
+  if (heroVideo instanceof HTMLVideoElement) {
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const stopAtPoster = () => {
+      heroVideo.autoplay = false;
+      heroVideo.pause();
+      heroVideo.currentTime = 0;
+    };
+    if (reduceMotion.matches) stopAtPoster();
+    // A preference changed while the page is open stops motion; it never restarts it.
+    reduceMotion.addEventListener("change", () => {
+      if (reduceMotion.matches) stopAtPoster();
+    });
+
+    if (videoToggle) {
+      const sync = () => videoToggle.setAttribute("aria-pressed", String(heroVideo.paused));
+      heroVideo.addEventListener("play", sync);
+      heroVideo.addEventListener("pause", sync);
+      videoToggle.addEventListener("click", () => {
+        if (heroVideo.paused) {
+          // play() rejects when the browser refuses; the pause event keeps the button honest.
+          heroVideo.play().catch(() => {});
+        } else {
+          heroVideo.pause();
+        }
+      });
+      sync();
+      videoToggle.hidden = false;
+    }
+  }
+
   // Mobile documentation page jump selector
   const docsSelect = document.querySelector("[data-docs-select]");
   if (docsSelect instanceof HTMLSelectElement) {

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from brand/tokens.json by scripts/brand/sync-tokens.mjs. Do not
+     edit: change the token and run the script. -->
+<resources>
+    <color name="brand_violet_300">#b19fff</color>
+    <color name="brand_violet_400">#9d86ff</color>
+    <color name="brand_violet_500">#9179ff</color>
+    <color name="brand_violet_600">#7c65ec</color>
+    <color name="brand_violet_700">#6e56e7</color>
+    <color name="brand_ink_950">#08090c</color>
+    <color name="brand_ink_900">#0e1015</color>
+    <color name="brand_plate">#1b1b22</color>
+    <color name="brand_text">#f3f4f8</color>
+    <color name="brand_text_muted">#9aa2b2</color>
+    <color name="brand_text_subtle">#666f82</color>
+    <color name="brand_success">#34d399</color>
+    <color name="brand_warning">#f59e0b</color>
+    <color name="brand_danger">#f87171</color>
+</resources>
