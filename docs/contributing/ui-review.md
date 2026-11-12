@@ -89,3 +89,6 @@ node scripts/docs/capture-readme-media.mjs --out /tmp/media   # write somewhere 
 It reuses the UI state capture's page harness (pinned clock, stubbed writes,
 injected frames), so no omp child is spawned and no model is called. It also
 needs ffmpeg for the GIF and pngquant for the PNGs.
+
+`node scripts/docs/render-social-card.mjs` regenerates `docs/media/social-card.png`, the
+1280x640 link-preview card the website serves as `og:image`; it needs no daemon.

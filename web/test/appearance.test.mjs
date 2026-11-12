@@ -11,7 +11,7 @@ test('missing or corrupt storage reads as the pre-Appearance look', () => {
 
 test('each invalid field falls back alone; valid neighbours survive', () => {
   const parsed = parseAppearance(JSON.stringify({ accent: 'chartreuse', density: 'compact', haptics: 'no', thinking: 'latest', future: 1 }), null);
-  assert.equal(parsed.accent, 'chatgpt');
+  assert.equal(parsed.accent, DEFAULT_APPEARANCE.accent);
   assert.equal(parsed.density, 'compact');
   assert.equal(parsed.haptics, true);
   assert.equal(parsed.thinking, 'latest');
@@ -56,7 +56,7 @@ test('hues wrap and round; a preset is matched only while all its choices hold',
   assert.equal(parseAppearance('{"accentHue":-30.4}', null).accentHue, 330);
   assert.equal(parseAppearance('{"accentHue":725}', null).accentHue, 5);
   assert.equal(parseAppearance('{"accentHue":"red"}', null).accentHue, DEFAULT_APPEARANCE.accentHue);
-  assert.equal(matchingPreset(DEFAULT_APPEARANCE), 'chatgpt');
+  assert.equal(matchingPreset(DEFAULT_APPEARANCE), 'pulse');
   const terminal = { ...DEFAULT_APPEARANCE, ...PRESETS.find(p => p.value === 'terminal').patch };
   assert.equal(matchingPreset(terminal), 'terminal');
   assert.equal(matchingPreset({ ...terminal, corners: 'round' }), null);

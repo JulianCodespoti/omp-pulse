@@ -66,3 +66,32 @@ test("website builds cleanly and all internal links, anchors, and media resolve"
     rmSync(out, { recursive: true, force: true });
   }
 });
+
+test("every page's og:image and twitter:image are absolute URLs of a card that exists in the build", () => {
+  const out = mkdtempSync(join(tmpdir(), "omp-pulse-site-test-"));
+  try {
+    const { pages } = buildSite(out);
+
+    const cargo = readFileSync(join(ROOT, "Cargo.toml"), "utf8");
+    const repoSlug = cargo.match(/^repository\s*=\s*"https:\/\/github\.com\/([^"]+)"/m)?.[1];
+    assert.ok(repoSlug, "Cargo.toml has a GitHub repository URL");
+    const [owner, name] = repoSlug.replace(/\/+$/, "").split("/");
+    const siteUrl = `https://${owner.toLowerCase()}.github.io/${name}/`;
+
+    for (const relPage of pages) {
+      const html = readFileSync(join(out, relPage), "utf8");
+      for (const property of ["og:image", "twitter:image"]) {
+        const attr = property.startsWith("og:") ? "property" : "name";
+        const url = html.match(new RegExp(`<meta ${attr}="${property}" content="([^"]+)"`))?.[1];
+        assert.ok(url, `${relPage} has ${property}`);
+        assert.ok(url.startsWith(siteUrl), `${relPage} ${property} ${url} is under ${siteUrl}`);
+        const file = join(out, url.slice(siteUrl.length));
+        assert.ok(existsSync(file) && statSync(file).isFile(), `${relPage} ${property} points at ${url}, which the build does not contain`);
+      }
+      const ogUrl = html.match(/<meta property="og:url" content="([^"]+)"/)?.[1];
+      assert.ok(ogUrl?.startsWith(siteUrl), `${relPage} og:url ${ogUrl} is under ${siteUrl}`);
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});

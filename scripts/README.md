@@ -51,6 +51,8 @@ See [docs/contributing/deploying.md](../docs/contributing/deploying.md).
   from the `//!` header of every `src/**/*.rs`.
 - `capture-readme-media.mjs`: regenerates the screenshots and GIF in
   `docs/media/`; see [docs/contributing/ui-review.md](../docs/contributing/ui-review.md).
+- `render-social-card.mjs`: regenerates `docs/media/social-card.png`, the link-preview
+  image the website serves as `og:image`.
 
 ## `release/`: public releases and forks
 

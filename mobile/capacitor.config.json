@@ -1,6 +1,6 @@
 {
   "appId": "com.omppulse.app",
-  "appName": "omp-pulse",
+  "appName": "OMP Pulse",
   "webDir": "../public/app",
   "_comment.server": "No server.url, by design: the shell derives it at startup from the run mode (NativeConfig.capConfig) — none for the bundled onboarding, the on-device daemon in phone mode, the laptop in laptop mode. OMP_PULSE_SERVER_URL (optional) only sets the default laptop; gradle strips any server.url from the generated asset. Do not set server.hostname/androidScheme: NativeConfig.BUNDLED_APP_URL assumes Capacitor's https://localhost.",
   "_comment.webDir": "The same React/PWA build is bundled into the Android shell. It is the first-run onboarding on public builds and the offline fallback; OmpShellActivity owns fallback and preserves the conversation fragment; do not configure server.errorPath."

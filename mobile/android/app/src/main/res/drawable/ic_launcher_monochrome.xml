@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon layer (Android 13+): the launcher foreground's pulse line and end
+     dot as one silhouette, which the launcher tints with the wallpaper palette.
+     Coordinates are web/public/icon.svg's (512 units) placed exactly where
+     ic_launcher_foreground draws them on the 108dp canvas: x = 27 + (u - 81) * 0.1524,
+     y = 42.25 + (u - 181) * 0.1524. Without this layer a themed home screen showed
+     the full-colour icon among monochrome ones. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.572"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M29.286,55.509 H40.716 L44.983,44.536 L51.384,63.434 L57.175,52.156 L60.376,55.509 H78.054" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M78.054,52.309 A3.2,3.2 0 1,0 78.054,58.709 A3.2,3.2 0 1,0 78.054,52.309 Z" />
+</vector>
