@@ -1013,7 +1013,7 @@ export function buildSite(outDir = DIST) {
   for (const name of mediaFiles) {
     const src = join(ROOT, "docs/media", name);
     if (!existsSync(src)) {
-      throw new Error(`Missing required media asset: ${relative(ROOT, src)} (run scripts/docs/capture-readme-media.mjs, or scripts/docs/render-social-card.mjs for social-card.png)`);
+      throw new Error(`Missing required media asset: ${relative(ROOT, src)} (run scripts/docs/capture-readme-media.mjs, or scripts/docs/render-brand-images.mjs for social-card.png)`);
     }
     copyFileSync(src, join(outDir, "assets/media", name));
   }
