@@ -861,7 +861,8 @@ html[data-font="mono"] .dark {
  }
 
  to {
-  translate: 400% 0;
+  /* One cell per page: the last page is (count - 1) cells along. */
+  translate: calc((var(--ws-count) - 1) * 100%) 0;
  }
 }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
-import { boundContext, type KeyedSlotId, type PluginRenderContext, type UnkeyedSlotId } from "../../domain/plugins";
+import { boundContext, type KeyedSlotId, type PluginInfo, type PluginRenderContext, type UnkeyedSlotId } from "../../domain/plugins";
 import { pluginHost, type PluginHostState, type PluginSlotView } from "../../runtime/plugin-host";
 
 // One shared identity for "no views", so a surface without a key never sees a change.
@@ -27,6 +27,31 @@ export function usePluginSlot(
     [slot],
   );
   return { views: state.views[slot], onAction };
+}
+
+/** An enabled plugin that draws a page in the chat's workspace drawer. */
+export interface WorkspacePlugin {
+  id: string;
+  name: string;
+}
+
+// Derived once per catalogue and kept by identity while equal: the session
+// pager subscribes for this list alone, and must not re-render on every view a
+// plugin publishes (a composer chip every few seconds).
+let workspaceFrom: PluginInfo[] | null | undefined;
+let workspaceList: readonly WorkspacePlugin[] | null = null;
+function workspaceSnapshot(): readonly WorkspacePlugin[] | null {
+  const { catalog } = pluginHost.getState();
+  if (catalog === workspaceFrom) return workspaceList;
+  workspaceFrom = catalog;
+  const next = catalog?.filter((p) => p.status === "enabled" && p.slots.includes("workspace")).map(({ id, name }) => ({ id, name })) ?? null;
+  if (next === null || workspaceList === null || JSON.stringify(next) !== JSON.stringify(workspaceList)) workspaceList = next;
+  return workspaceList;
+}
+
+/** Enabled plugins declaring the `workspace` slot, in catalogue order; null until the catalogue first loads. */
+export function useWorkspacePlugins(): readonly WorkspacePlugin[] | null {
+  return useSyncExternalStore(pluginHost.subscribe, workspaceSnapshot, workspaceSnapshot);
 }
 
 /**
