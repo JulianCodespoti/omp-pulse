@@ -13,12 +13,13 @@ manifest declares, and serves the script to your paired devices. The app runs
 the script in a sandboxed worker and draws the small declarative views it
 returns.
 
-A plugin can draw in eight slots:
+A plugin can draw in nine slots:
 
 - `composer.status`: a chip, or a row of chips, beside the composer.
 - `composer.actions`: rows in the composer's plus sheet.
 - `drawer`: a few chips, text, progress bars and rows in the drawer.
 - `page`: a full page of your own, opened from a chip or button.
+- `workspace`: a tab of your own in a conversation's workspace drawer, shared with other plugins as one "Plugins" tab.
 - `session.row`: chips at the end of a conversation's row in the Chats list.
 - `session.menu`: rows in a conversation's actions menu.
 - `transcript.tool`: a card under a tool call's row, which stays visible.
@@ -97,7 +98,7 @@ Unknown keys are rejected everywhere, so a typo shows up in `plugin check`.
 | `version` | Required. 1 to 32 characters. No control characters. |
 | `description` | Optional. At most 200 characters. No control characters. |
 | `client` | Required. A file name with no path separator and no `..`, inside the plugin folder, valid UTF-8, at most 262144 bytes. |
-| `slots` | Required. Non-empty, no duplicates, each one of `composer.status`, `composer.actions`, `drawer`, `page`, `session.row`, `session.menu`, `transcript.tool`, `transcript.message`. |
+| `slots` | Required. Non-empty, no duplicates, each one of `composer.status`, `composer.actions`, `drawer`, `page`, `workspace`, `session.row`, `session.menu`, `transcript.tool`, `transcript.message`. |
 | `permissions` | Optional, no duplicates, each one of `session.read`, `session.compose`, `session.prompt`, `session.bash`, `session.rpc`. |
 | `tools` | Required, non-empty (at most 16) exactly when `slots` has `transcript.tool`; rejected otherwise. Claim patterns, see below. |
 | `messages` | The same for `transcript.message`: claim patterns for custom message types. |
@@ -224,6 +225,7 @@ than 65536 bytes as JSON is rejected in every slot. Returning `null` or
 | `composer.actions` | `list` | 1 | 1 | At most 8 items; the list must have `actions.click`. |
 | `drawer` | `chip`, `text`, `progress`, `row`, `col` | 12 | 3 | |
 | `page` | all | 300 | 8 | |
+| `workspace` | all | 300 | 8 | |
 | `session.row` | `chip`, or one `row` of chips | 3 | 2 | |
 | `session.menu` | `list` | 1 | 1 | At most 6 items; the list must have `actions.click`. |
 | `transcript.tool` | all | 120 | 6 | |
@@ -236,6 +238,7 @@ A list item's `id` (at most 64 characters) is what a tap passes as `item`.
 | Slot | Where | Context |
 |---|---|---|
 | `composer.actions` | The composer's plus sheet, after the commands. | The open conversation. |
+| `workspace` | The Plugins tab after Terminal in the chat's workspace drawer, shown while at least one enabled plugin declares the slot. With several plugins, a row of their names at the top picks one, and only the chosen plugin runs there. | The open conversation. |
 | `session.row` | The end of the meta line of a row in the Chats list and a project's chats. Not on drawer rows. | That row's conversation. |
 | `session.menu` | Both conversation menus: the long-press actions sheet and the chat header's menu. Drawn as rows under the plugin's name; a tap closes the menu. | That conversation. |
 | `transcript.tool` | Under the stock row of a tool call the plugin claims; the row stays, so a card can add to what a call says it did but never replace it. | The call, and the open conversation. |
@@ -351,7 +354,9 @@ polling also happens only while the app is visible, about one second after
 `interval_s` has elapsed.
 
 A plugin keeps running for 10 seconds after the last slot it declares leaves
-the screen, so opening and closing the drawer does not restart it.
+the screen, so opening and closing the drawer does not restart it. A `workspace`
+view runs only while the workspace drawer is open and the Plugins tab is shown
+or next to the page shown.
 
 A plugin that fails is stopped and shown in Settings as "Stopped on this phone"
 with the reason and a **Restart** button: a script error at load, a render

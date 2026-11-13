@@ -36,7 +36,7 @@ const nested = (depth) => (depth === 1 ? text('leaf') : col(nested(depth - 1)));
 
 test('exposes the slots in contract order, and which are keyed', () => {
   assert.deepEqual([...PLUGIN_SLOTS], [
-    'composer.status', 'composer.actions', 'drawer', 'page',
+    'composer.status', 'composer.actions', 'drawer', 'page', 'workspace',
     'session.row', 'session.menu', 'transcript.tool', 'transcript.message',
   ]);
   assert.deepEqual([...KEYED_SLOTS], ['session.row', 'session.menu', 'transcript.tool', 'transcript.message']);

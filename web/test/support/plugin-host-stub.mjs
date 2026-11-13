@@ -20,7 +20,7 @@ const emptyKeyed = () => Object.fromEntries(KEYED.map((slot) => [slot, {}]));
 const state = {
   catalog: [],
   catalogError: null,
-  views: { 'composer.status': [], 'composer.actions': [], drawer: [], page: [], 'session.row': [], 'session.menu': [], 'transcript.tool': [], 'transcript.message': [] },
+  views: { 'composer.status': [], 'composer.actions': [], drawer: [], page: [], workspace: [], 'session.row': [], 'session.menu': [], 'transcript.tool': [], 'transcript.message': [] },
   keyed: emptyKeyed(),
   runtimes: {},
   haltedAfterCrash: false,

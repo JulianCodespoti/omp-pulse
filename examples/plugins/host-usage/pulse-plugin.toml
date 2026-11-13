@@ -4,7 +4,7 @@ name = "Host usage"
 version = "0.1.0"
 description = "Load and memory of the computer running the daemon"
 client = "client.js"
-slots = ["drawer", "composer.status", "page"]
+slots = ["drawer", "composer.status", "page", "workspace"]
 
 # Each source is a fixed command (argv, never a shell line). The daemon runs it
 # only when a device asks and the cached output is older than interval_s.

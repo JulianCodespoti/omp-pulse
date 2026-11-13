@@ -16,11 +16,12 @@ use sha2::{Digest, Sha256};
 /// The manifest's file name inside a plugin folder.
 pub const MANIFEST_FILE: &str = "pulse-plugin.toml";
 /// Slots a plugin may declare. A closed list: the client only knows how to draw these.
-pub const KNOWN_SLOTS: [&str; 8] = [
+pub const KNOWN_SLOTS: [&str; 9] = [
     "composer.status",
     "composer.actions",
     "drawer",
     "page",
+    "workspace",
     "session.row",
     "session.menu",
     "transcript.tool",
@@ -1264,8 +1265,8 @@ mod tests {
 
     #[test]
     fn every_slot_is_accepted_and_permissions_are_a_closed_unique_list() {
-        let slots = r#"["composer.status", "composer.actions", "drawer", "page", "session.row", "session.menu"]"#;
-        assert_eq!(loaded(&with_extra(slots, "")).slots.len(), 6);
+        let slots = r#"["composer.status", "composer.actions", "drawer", "page", "workspace", "session.row", "session.menu"]"#;
+        assert_eq!(loaded(&with_extra(slots, "")).slots.len(), 7);
         let all = with_extra(
             r#"["transcript.tool", "transcript.message"]"#,
             "tools = [\"t\"]\nmessages = [\"m\"]\n",

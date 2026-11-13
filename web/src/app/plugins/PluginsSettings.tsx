@@ -22,6 +22,7 @@ const SLOT_LABEL: Record<string, string> = {
   "composer.actions": "Message box plus menu",
   drawer: "Side drawer",
   page: "Its own page",
+  workspace: "A tab in the chat's workspace",
   "session.row": "Chat list rows",
   "session.menu": "Conversation menus",
   "transcript.tool": "Tool call cards",
