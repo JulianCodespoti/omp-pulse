@@ -37,11 +37,13 @@ account at the level of its role.
 - **Device credentials.** Each phone or browser gets its own credential by redeeming an
   enrollment code. Roles:
   - `read`: read and stream sessions;
-  - `control`: read, stream and control (send prompts, act on sessions); the default;
-  - `admin`: control, plus device management (issuing enrollment codes, listing devices,
-    revoking other devices).
+  - `control`: read, stream and control (send prompts, act on sessions);
+  - `admin`: control, plus adding model providers and device management (issuing enrollment
+    codes, listing devices, revoking other devices). This is the default.
 - **Enrollment codes.** Issued by `omp-pulse setup` or `omp-pulse pair [--role read|control|admin]
-  [--name NAME]`. A code is single-use and expires after 5 minutes.
+  [--name NAME]`; both default to `admin` and print the role the code grants. A code is
+  single-use and expires after 5 minutes. `control` is a guardrail, not a boundary: a control
+  device can already run any command on the computer, so only `read` truly limits a device.
 - **Storage on the daemon.** The device registry (`<state_dir>/devices.json`) stores only SHA-256
   digests of device tokens and pending enrollment codes; the clear values exist only in memory long
   enough to hand them to the caller. Comparisons are constant-time. A copy of the registry cannot

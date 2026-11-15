@@ -97,7 +97,7 @@ You need [omp](https://github.com/can1357/oh-my-pi) working first. The [Getting 
    tailscale serve --bg --set-path / http://127.0.0.1:7681
    ```
 
-4. **Pair your phone.** Run `omp-pulse pair` and scan the QR code. On iPhone, add Pulse to your Home Screen; on Android, install the [app](https://github.com/JulianCodespoti/omp-pulse/releases/latest/download/omp-pulse.apk) and tap **Connect a computer**.
+4. **Pair your phone.** Run `omp-pulse pair` and scan the QR code. On iPhone, add Pulse to your Home Screen; on Android, install the [app](https://github.com/JulianCodespoti/omp-pulse/releases/latest/download/omp-pulse.apk) and tap **Connect a computer**. This pairs your phone as an admin; to pair another device with less access, see [pairing roles](docs/user/configuration.md#pairing-roles).
 
 ### On your phone
 
@@ -119,7 +119,7 @@ Pulse is one small program that runs next to omp on your computer, plus the app 
 
 ## Privacy, Security & Limitations
 
-- **Your credentials stay with you.** Devices are stored on your computer by a hash of their key, each with a role (`read`, `control` or `admin`). Pairing QR links carry a short-lived code, never your owner secrets.
+- **Your credentials stay with you.** Devices are stored on your computer by a hash of their key, each with a role (`admin`, `control` or `read`; your own phone is an admin by default). Pairing QR links carry a short-lived code, never your owner secrets.
 - **Phone mode is not sandboxed.** In Android phone mode, **`proot` is not a security sandbox**: commands the agent runs have the same Android user ID and permissions as the Pulse app. Read [SECURITY.md](SECURITY.md) before you turn on Android phone tools.
 - **Platform limits.** There is no native iOS app and no on-device runtime for iPhone; iPhone uses the web app connected to a computer. The Android app is for arm64 phones only (`arm64-v8a`, with both 4 KB and Android 15+ 16 KB page sizes). Automatic joining of terminal sessions (`herdr`, `kitty`, `tmux`) works on Mac and Linux only; on Windows, sessions pair through native collab or `/collab` ([Windows guide](docs/user/windows.md)).
 

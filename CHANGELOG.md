@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The UI state catalogue has the first-run "Setting up omp" screen (`onboarding-phone-setting-up`).
 - The website is quieter: no labels above section headings, no pulsing dot in the opening pill and no caption under the opening demo; the three facts under the opening buttons sit in a column, the selected tour item has a plain border, and neither way of using Pulse is highlighted until hovered.
 - The README's quick start is just the steps, "On your computer" and "On your phone", with the detail left to the Getting started and Phone mode guides, and its second image row is gone. The app's connection and update guide links point at the new "On your computer" heading.
+- `omp-pulse pair` and `omp-pulse setup` now issue an admin code by default, and both print the role a code grants. People who followed the README got a `control` device and could not add a model provider or remove a lost device. The README, Getting started and configuration docs now explain the three roles. In the app, the role descriptions name what each role can't do (a control device can't add model providers), and a phone that is not an admin is told how to become one on its Model providers and Computer screens. Existing devices keep their role: a phone paired as control can pair again with `omp-pulse pair` to become admin.
 
 ### Fixed
 - A notice with a long conversation title (such as "Reply ready") truncates the title instead of pushing the notice and its Open button past the edge of the screen.

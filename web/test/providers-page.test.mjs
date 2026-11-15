@@ -33,9 +33,9 @@ async function fixture(t, mode, role) {
 }
 
 for (const mode of ['web', 'laptop']) {
-  test(`${mode}: a read-only device lists the computer's providers and cannot add`, async (t) => {
+  test(`${mode}: a device that may not manage asks only for its role, never the admin-only list, and cannot add`, async (t) => {
     const x = await fixture(t, mode, 'control');
-    assert.equal(x.calls(), 'role,list');
+    assert.equal(x.calls(), 'role');
     assert.equal(x.text().includes('Only an admin device can add providers.'), true);
     assert.equal(x.add(), null);
     assert.equal(x.f.bridgeCalls.length, 0, 'the phone bridge is never asked about a computer');

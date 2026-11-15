@@ -10,6 +10,7 @@ use clap::{Args, Parser, Subcommand};
 use qrcode::QrCode;
 use qrcode::render::unicode;
 
+use crate::server::device_auth::DeviceRole;
 use crate::types::CliOverrides;
 
 /// Drive your Oh My Pi coding sessions from your phone.
@@ -72,8 +73,9 @@ pub enum Command {
 
 #[derive(Debug, clap::Args)]
 pub struct PairArgs {
-    /// Credential role for the new device: admin, control (default), or read.
-    #[arg(long, default_value = "control", value_name = "ROLE")]
+    /// Credential role for the new device: admin (default: can do everything),
+    /// control (can't add model providers or manage devices), or read (can only watch).
+    #[arg(long, default_value = "admin", value_name = "ROLE")]
     pub role: String,
     /// Optional human-readable device name.
     #[arg(long, value_name = "NAME")]
@@ -319,6 +321,21 @@ pub fn plan_pairing_with_owner(host: &str, port: u16, owner_token: &str, code: &
         port,
         front_door,
         loopback_only,
+    }
+}
+
+/// Say which role a pairing code grants, so nobody learns about roles only
+/// after they cannot add a model provider or remove a lost device.
+pub fn print_pairing_role(role: DeviceRole) {
+    println!(
+        "\nThis code pairs {} device: {}",
+        role.article_name(),
+        role.summary()
+    );
+    if role.is_admin() {
+        println!(
+            "For a device that should have less, run `omp-pulse pair --role control` or `--role read`."
+        );
     }
 }
 
