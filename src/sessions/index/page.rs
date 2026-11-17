@@ -323,18 +323,32 @@ fn serialize_selected_rows_with_live(
             // the last answer, so the phone's delivered-answer count is the
             // position. Past the end (answered from the phone, file not yet
             // written) stays on the last question rather than vanishing.
-            let total = ask.questions.len();
-            let index = crate::terminal::herdr_state::ask_answers_delivered(&s.path, &ask.call_id)
-                .min(total.saturating_sub(1));
-            let q = &ask.questions[index];
-            row["pendingAsk"] = json!({
-                "id": ask.call_id,
-                "index": index,
-                "total": total,
-                "question": q.question,
-                "options": q.options,
-                "recommended": q.recommended,
-            });
+            // A form ask (omp >= 18.18.3) is one question the phone cannot
+            // answer by position, so it never counts deliveries.
+            row["pendingAsk"] = if ask.form {
+                json!({
+                    "id": ask.call_id,
+                    "question": ask.question,
+                    "form": true,
+                    "index": 0,
+                    "total": 1,
+                    "options": [],
+                })
+            } else {
+                let total = ask.questions.len();
+                let index =
+                    crate::terminal::herdr_state::ask_answers_delivered(&s.path, &ask.call_id)
+                        .min(total.saturating_sub(1));
+                let q = &ask.questions[index];
+                json!({
+                    "id": ask.call_id,
+                    "index": index,
+                    "total": total,
+                    "question": q.question,
+                    "options": q.options,
+                    "recommended": q.recommended,
+                })
+            };
         }
         if let Some(st) = live.get(&s.path) {
             row["model"] = json!(st.model);

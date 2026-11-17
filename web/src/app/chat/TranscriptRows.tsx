@@ -4,7 +4,7 @@
  * thread: one message row, the Bubbles sender line, and the turn grouping the
  * footer follows.
  */
-import { memo, useRef, useSyncExternalStore } from "react";
+import { memo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { Message, MessageContent } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
 import { useAppearance } from "@/platform/appearance";
@@ -15,6 +15,7 @@ import type { QueuedPrompt } from "@/runtime/offline-queue";
 import type { UserRowStatus } from "@/runtime/user-row-status";
 import { BubbleInfo, messageInfo, useBubbleInfo } from "../parts/Bubble";
 import { MessageParts } from "../parts/MessageParts";
+import { useUndoableDiscard, type UndoableDiscard } from "../parts/QueuedMessage";
 import { USER_BUBBLE } from "../parts/prose";
 import { pendingQuickQuestion, summarizeRun, type PendingAsk } from "../parts/run-summary";
 import { shortModel } from "../session-format";
@@ -306,6 +307,19 @@ function intrinsicSizeForMessage(message: UiMessage): string {
   return "auto 440px";
 }
 
+/**
+ * Owns the undo window of a user turn that carries delivery rows. Discarding
+ * a failed send hides the whole turn at once (bubble and everything drawn
+ * with it) while its `local:` echo is still in the store, so the turn looks
+ * removed rather than sent; Undo shows it again in place, and the commit
+ * drops the echo. A discard of another command's pill under a canonical row
+ * hides only that pill (MessageParts reads `hidden` for it).
+ */
+function UndoableTurn({ echoId, children }: { echoId: string | null; children: (undoable: UndoableDiscard) => ReactNode }) {
+  const undoable = useUndoableDiscard();
+  return echoId !== null && undoable.hidden.has(echoId) ? null : <>{children(undoable)}</>;
+}
+
 export const ChatMessageRow = memo(
   function ChatMessageRow({
     message,
@@ -353,7 +367,7 @@ export const ChatMessageRow = memo(
     const intrinsic = intrinsicSizeForMessage(message);
     const bubbles = useAppearance().messageStyle === "bubbles";
     const info = useBubbleInfo();
-    return (
+    const turn = (undoable?: UndoableDiscard) => (
       <Message
         {...bindings}
         style={{ containIntrinsicSize: intrinsic } as React.CSSProperties}
@@ -395,6 +409,7 @@ export const ChatMessageRow = memo(
             sessionPath={sessionPath}
             rowStatus={rowStatus}
             localPendingEntry={localPendingEntry}
+            undoable={undoable}
             onOpenPath={onOpenPath}
             onRetry={onRetry}
             retryDisabled={retryDisabled}
@@ -405,6 +420,10 @@ export const ChatMessageRow = memo(
         {bubbles && isUser ? <BubbleInfo text={messageInfo(message)} open={info.open} className="self-end" /> : null}
       </Message>
     );
+    const echoId = isUser && !message.sourceEntryId && message.id.startsWith("local:") ? message.id.slice("local:".length) : null;
+    return isUser && (localPendingEntry || rowStatus?.pills?.length)
+      ? <UndoableTurn echoId={echoId}>{turn}</UndoableTurn>
+      : turn();
   },
   (previous, next) =>
     previous.message === next.message &&

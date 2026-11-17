@@ -470,6 +470,12 @@ pub async fn send_ask_answer(
     option: Option<usize>,
     text: &str,
 ) -> Result<(), String> {
+    // omp >= 18.18.3 asks with an HTML form dialog, not this picker: the keys
+    // below would type into the wrong widget. `answer_pane` refuses first;
+    // this keeps the invariant local to the function that types.
+    if ask.form {
+        return Err("this question is a form; answer it on the computer".into());
+    }
     let question = ask
         .questions
         .get(index)

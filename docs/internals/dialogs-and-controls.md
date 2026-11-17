@@ -91,6 +91,20 @@ Copy and Open, and says that finishing needs the machine running omp. That card
 exists for collab only: an `open_url` from the daemon's own child is forwarded but
 not rendered, so omp's `login` RPC stays off the phone allowlist.
 
+## Form asks (omp 18.18.3 and later)
+
+omp 18.18.3 replaced the `ask` tool's `questions[]` with ONE HTML form
+(`arguments.html`). The daemon reads a pending ask from the session file
+(`pending_ask`), and an `html` call yields a `PendingAsk` with `form: true`: its
+question is the form's first legend, last paragraph before the first control, or
+first label, and it has no options. The session list projects it as
+`pendingAsk: {form: true, index: 0, total: 1, options: []}`. The laptop TUI shows a
+form dialog, not the Ask picker, so `/api/panes/answer` refuses (409) to type into a
+laptop pane for a form ask, with or without `terminalOnly`, and the answer sheet
+offers no options, text box or terminal prompt for it, only Open session. A daemon
+child walks the same form field by field as ordinary `select`/`input`/`editor`
+dialogs, which the chat's dialog sheet answers by exact request ID.
+
 ## A question must outlive the socket
 
 The desktop broadcasts each `ui-request` exactly ONCE. A phone whose socket is shut

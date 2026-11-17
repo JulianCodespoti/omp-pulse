@@ -1,13 +1,13 @@
 "use client";
 
-import { ArrowUpIcon, CircleAlertIcon, ClockIcon, CornerDownRightIcon, PencilIcon, RefreshCwIcon, SearchIcon, XIcon } from "lucide-react";
+import { ArrowUpIcon, CircleAlertIcon, ClockIcon, CornerDownRightIcon, PencilIcon, RefreshCwIcon, SearchIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useLayoutEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useStoreValue } from "@/app/store-hooks";
 import { showErrorToast, showToast } from "@/app/Notices";
-import { UNCERTAIN_HINT, UNCERTAIN_LABEL, UNCERTAIN_SEND_TOAST, failedSendHint } from "@/app/send-copy";
+import { SEND_KEPT_NOTICE, UNCERTAIN_HINT, UNCERTAIN_LABEL, UNCERTAIN_SEND_TOAST } from "@/app/send-copy";
 import { ConfirmSheet } from "@/app/ui/Sheet";
 import { humanizeReceiptError } from "@/app/ui/OwnedBySession";
 import { errorRecoveryAction } from "@/app/ui/error-recovery";
@@ -19,7 +19,7 @@ import { selectCanPromoteQueuedMessage } from "@/runtime/omp-store";
 import { turnOutcome } from "@/runtime/receipt-outcome";
 import { PendingQueueActions } from "./pending-queue-actions";
 import { restoreWithdrawnDraft } from "../composer/withdrawn-draft";
-import { editFailedSend, sendPhase, useSendLinkDown, useSlowSend, useUndoableDiscard, type SendPhase } from "../parts/QueuedMessage";
+import { editFailedSend, removeSend, sendPhase, useSendLinkDown, useSlowSend, useUndoableDiscard, type SendPhase } from "../parts/QueuedMessage";
 import { getDraftNamespace } from "../composer/use-draft";
 
 type QueueRow =
@@ -132,6 +132,13 @@ export function QueuedMessagesBar({ controller, pending, onChooseModel }: {
     removeLabel: "Remove queued message",
   });
 
+  const dropEcho = (commandId: string) => store.getState().dropOptimisticEcho(commandId);
+  // Every outbox removal (Discard after its undo window, the unconfirmed
+  // sheet) drops the entry and its echo together and says so when the send
+  // had moved on and was kept.
+  const removeOutbox = async (entry: QueuedPrompt, cancel: () => Promise<boolean>) => {
+    if (!await removeSend(entry.commandId, cancel, dropEcho)) showToast(SEND_KEPT_NOTICE, "info");
+  };
   const outboxActions = (entry: QueuedPrompt, key: string) => {
     const actions = pendingIntentActions(entry);
     // A reserved saved row resumes the same transfer after reload/ack loss.
@@ -144,7 +151,7 @@ export function QueuedMessagesBar({ controller, pending, onChooseModel }: {
           await restoreWithdrawnDraft(entry.sessionPath, withdrawn, namespace, recoveryId);
         });
         if (!restored) showToast("This saved message has moved on.", "info");
-      }) : entry.state === "failed" ? () => act(key, () => editFailedSend(entry, actions.cancel)) : undefined,
+      }) : entry.state === "failed" ? () => act(key, () => editFailedSend(entry, actions.cancel, dropEcho)) : undefined,
       sendNow: (entry.state === "saved" || entry.state === "uncertain") && !entry.editToken ? () => act(key, async () => {
         const receipt = await actions.retry();
         if (receipt?.state === "failed" || receipt?.state === "uncertain") {
@@ -153,7 +160,7 @@ export function QueuedMessagesBar({ controller, pending, onChooseModel }: {
           else showErrorToast(receipt.error ?? "Couldn’t send the message.");
         }
       }) : undefined,
-      remove: settled ? () => entry.state === "uncertain" ? setDiscard(entry) : undo.discard(entry.commandId, () => actions.cancel()) : undefined,
+      remove: settled ? () => entry.state === "uncertain" ? setDiscard(entry) : undo.discard(entry.commandId, () => removeOutbox(entry, actions.cancel)) : undefined,
       removeLabel: "Discard message",
     };
   };
@@ -183,7 +190,7 @@ export function QueuedMessagesBar({ controller, pending, onChooseModel }: {
             // the composer and Discard can be undone.
             const hint = row.kind !== "outbox" || outcome ? undefined
               : row.entry.state === "uncertain" ? UNCERTAIN_HINT
-              : row.entry.state === "failed" ? failedSendHint(why)
+              : row.entry.state === "failed" ? (why || undefined)
               : undefined;
             return (
               <li
@@ -232,7 +239,12 @@ export function QueuedMessagesBar({ controller, pending, onChooseModel }: {
                     {row.entry.state === "uncertain" ? "Check" : "Try again"}
                   </Button>
                 ) : <IconAction label="Send now" disabled={busy} onClick={actions.sendNow}><ArrowUpIcon aria-hidden /></IconAction> : null}
-                {actions.remove ? <IconAction label={actions.removeLabel} disabled={busy} onClick={actions.remove}><XIcon aria-hidden /></IconAction> : null}
+                {actions.remove ? row.kind === "outbox" && row.entry.state === "failed" ? (
+                  <Button variant="ghost" aria-label="Discard" disabled={busy} onClick={actions.remove} className="h-auto min-h-[48px] max-w-full whitespace-normal text-primary-text">
+                    <Trash2Icon aria-hidden />
+                    Discard
+                  </Button>
+                ) : <IconAction label={actions.removeLabel} disabled={busy} onClick={actions.remove}><XIcon aria-hidden /></IconAction> : null}
                 {row.kind === "outbox" && outcome && why ? (
                   <p className="basis-full break-words pb-2 pr-2 text-meta text-muted-foreground">{why}</p>
                 ) : null}
@@ -252,7 +264,7 @@ export function QueuedMessagesBar({ controller, pending, onChooseModel }: {
         onConfirm={() => {
           const entry = discard;
           setDiscard(null);
-          if (entry) void act(`outbox\u0000${entry.commandId}`, async () => { await pendingIntentActions(entry).cancel(); });
+          if (entry) void act(`outbox\u0000${entry.commandId}`, () => removeOutbox(entry, pendingIntentActions(entry).cancel));
         }}
       />
     </>

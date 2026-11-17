@@ -101,10 +101,9 @@ import type { PromptDelivery } from "../domain/send-mode";
 import { loadMessageImages } from "./message-images";
 import { reduceStateEvent } from "./omp-state-events";
 import { createBtwStore, reduceBtwFrame, type BtwStore } from "./btw";
-import { clearExtensionDialogs, closeExtensionDialog, markExtensionDialogDelivery, reduceExtensionDialogSnapshot, reduceExtensionUiRequest, type ExtensionDialogResponse } from "./extension-dialogs";
+import { clearExtensionDialogs, closeExtensionDialog, markExtensionDialogDelivery, reduceExtensionDialogSnapshot, reduceExtensionUiRequest, selectMetadata, type ExtensionDialogResponse } from "./extension-dialogs";
 import { clearExtensionDrafts, consumeExtensionDraft, prepareExtensionDraft, readExtensionDraft, recoverExtensionNotices, reduceExtensionFeedback } from "./extension-feedback";
 import { acknowledgeCollabAnswer, collabAnswerCanRetry, interruptCollabAnswer, type CollabAnswerState } from "./collab-answer";
-import { collabSelectionMetadata } from "./collab-selection";
 import { readCollabQuestionFrame, collabQuestionIdentity, collabQuestionKey, collabQuestionSettled, type CollabQuestionCursor, type CollabQuestionIdentity } from "./collab-question-lifecycle";
 import { modelFallbackMarker, parseModelFallback, type ModelFallback } from "../domain/model-fallback";
 import { clearReviewNotes } from "./review-notes";
@@ -4522,7 +4521,7 @@ export class OmpSessionController {
     return {
       reqId, kind, prompt, options, placeholder, pulseQuestionToken,
       ...(rawKind === "select" && Array.isArray(rawOptions) && options?.length === rawOptions.length
-        ? collabSelectionMetadata(obj, options.length) : {}),
+        ? selectMetadata(obj, options.length) : {}),
     };
   }
 

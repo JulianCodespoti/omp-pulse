@@ -12,11 +12,14 @@ import { startVisibleInterval } from "@/runtime/visible-interval";
  * local UI, and a declined prompt goes back to the composer for the user to
  * send. `stopTurn` is the composer's Stop (same abort, same queued-message
  * restore), for a running agent command that cannot be stopped on its own.
+ * `dropOptimisticEcho` removes a discarded send's `local:<commandId>` bubble
+ * once its outbox entry is really gone.
  */
 export interface TranscriptActions {
   switchModel(): void;
   editPrompt(text: string): void;
   stopTurn(): Promise<unknown>;
+  dropOptimisticEcho(commandId: string): void;
 }
 
 export const TranscriptActionsContext = createContext<TranscriptActions | null>(null);

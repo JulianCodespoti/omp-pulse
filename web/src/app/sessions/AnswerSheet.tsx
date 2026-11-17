@@ -177,7 +177,11 @@ export function AnswerSheet({ session, open, onOpenChange, onSent, onOpenSession
   const terminalBusy = terminal?.phase !== "draft" && terminal?.phase !== "rejected";
   const terminalHistory = Object.entries(terminalSubmissions).filter(([key, entry]) => key !== terminalKey && entry.path === session?.path && entry.epoch === ownerEpoch.current);
 
-  const options = Array.isArray(pending?.options) ? pending.options : [];
+  // A form ask cannot be answered from here: the daemon refuses to type into
+  // the laptop's form dialog (it is not the Ask picker), so no option buttons,
+  // no text box and no terminal prompt are offered, only the way to the session.
+  const form = pending?.form === true;
+  const options = !form && Array.isArray(pending?.options) ? pending.options : [];
   const recommended = typeof pending?.recommended === "number" ? pending.recommended : null;
   const status = capacityBlocked ? "64 answers are already saved. Finish a question or remove a saved terminal response before adding another; no drafts were removed."
     : attempt?.phase === "sending" ? "Sending answer…"
@@ -190,7 +194,8 @@ export function AnswerSheet({ session, open, onOpenChange, onSent, onOpenSession
     <BottomSheet open={open && !!session} onOpenChange={onOpenChange} title="Answer question" description={session ? sessionTitle(session) : undefined} testId="answer-sheet">
       <div className="space-y-4 pb-2">
         {status ? <Notice tone={attempt?.phase === "rejected" ? "danger" : "warning"} testId="answer-error"><span role="status">{status}</span>{attempt?.phase === "uncertain" && attempt.reason ? <p className="mt-1">{attempt.reason}</p> : null}</Notice> : null}
-        {!askId ? <Notice tone="warning" testId="answer-unidentified">Open the session for its question, or answer a terminal prompt below.</Notice> : null}
+        {!askId && !form ? <Notice tone="warning" testId="answer-unidentified">Open the session for its question, or answer a terminal prompt below.</Notice> : null}
+        {form ? <Notice tone="warning" testId="answer-form">This question is a form. Answer it on the computer, or open the session if this phone started the turn.</Notice> : null}
         {total > 1 ? <p className="text-meta text-muted-foreground" data-testid="answer-progress">{busy && index + 1 < total ? `Waiting for question ${index + 2} of ${total}…` : `Question ${index + 1} of ${total}`}</p> : null}
         <p className="whitespace-pre-wrap text-title font-medium text-foreground break-words [overflow-wrap:anywhere]">{pending?.question?.trim() ? <LinkedText text={pending.question.trim()} /> : "Waiting for input"}</p>
         {askId && options.length > 0 ? (
@@ -213,13 +218,13 @@ export function AnswerSheet({ session, open, onOpenChange, onSent, onOpenSession
             ))}
           </div>
         ) : null}
-        {askId ? <form className="pt-1" onSubmit={(e) => { e.preventDefault(); void handleSend(text); }}>
+        {askId && !form ? <form className="pt-1" onSubmit={(e) => { e.preventDefault(); void handleSend(text); }}>
           <div className="flex items-center gap-2">
             <Input className="h-12 flex-1 rounded-lg border border-transparent bg-surface-2 px-4 text-body focus-visible:border-control focus-visible:ring-0 md:text-body dark:bg-surface-2" data-testid="answer-text-input" aria-label="Your answer" value={text} disabled={busy} onChange={(e) => { const value = e.currentTarget.value; if (retain()) setDrafts((all) => ({ ...all, [questionKey]: value })); }} placeholder={options.length > 0 ? "Or type an answer…" : "Type your answer…"} />
             <Button aria-label={attempt?.phase === "sending" ? "Sending answer" : attempt?.phase === "rejected" ? "Retry answer" : "Send answer"} data-testid="answer-send-button" variant="primary" size="icon" type="submit" disabled={busy || !text.trim()}><ArrowUpIcon className="size-5" /></Button>
           </div>
         </form> : null}
-        {!askId ? <div className="space-y-3">
+        {!askId && !form ? <div className="space-y-3">
           {terminal && terminalKey ? <>
             <p role="status" className="text-meta text-muted-foreground" data-testid="terminal-response-status">{terminalResponseStatus(terminal)}</p>
             <form onSubmit={event => { event.preventDefault(); void sendTerminalResponse(terminalKey); }} className="flex items-center gap-2">

@@ -43,6 +43,13 @@ const streamingFrames = (content) => [
   ev({ type: "message_start", message: { role: "assistant", responseId: "cap-r1", content } }),
 ];
 const ASK = (extra) => ev({ type: "collab_ui_request", request: { reqId: 7, prompt: "Which retry budget should the webhook client use?", ...extra } });
+// omp >= 18.18.3 asks with one HTML form; over RPC it arrives field by field
+// as plain select/input dialogs while the `ask` tool call is still running.
+const ASK_FORM_FRAMES = (dialog) => [
+  ...streamingFrames([{ type: "text", text: "Two choices before I change the retry policy." }]),
+  ev({ type: "tool_execution_start", toolCallId: "cap-ask", toolName: "ask", args: { html: "<form><p>Retry policy for the webhook client.</p><fieldset><legend>Which failures should retry?</legend><label><input type=\"checkbox\" name=\"retry\" value=\"5xx\" checked> Server errors (5xx)</label></fieldset></form>" } }),
+  ev({ type: "extension_ui_request", id: "cap-ask-field", ...dialog }),
+];
 
 const DEVICE_ADMIN = { device: { id: "owner", name: "Desktop owner", role: "admin", lastSeenAt: now - 60_000 } };
 const DEVICES = {
@@ -773,6 +780,15 @@ export const RECIPES = [
       await ui.el("[data-testid='send-status']");
       await ui.text("Waiting for connection", 15_000);
     } },
+  { id: "chat-send-failed", group: "Connection", title: "Message not sent", note: "a refused send: the reason once, Edit and a labelled Discard under the bubble",
+    setup: (env) => ({ hash: env.chatHash("tsconfig"), stubs: [{ method: "POST", path: "/api/prompt", status: 409, body: { ok: false, code: "agent_rejected", error: "agent_rejected: Agent is already processing." } }] }),
+    run: async (ui) => {
+      await ui.chat();
+      await ui.type("[data-testid='composer-input']", "Send the retry notes now.");
+      await ui.click("[data-testid='composer-send-btn']");
+      await ui.el("[data-testid='send-status'][data-state='failed']", 15_000);
+      await ui.text("Discard");
+    } },
   { id: "chat-context-warning", group: "Connection", title: "Context nearly full",
     setup: (env) => ({ hash: env.chatHash("tsconfig"), stubs: [{ method: "POST", path: "/api/rpc", rpc: "get_state", body: { ok: true, data: { model: { provider: "anthropic", id: "claude-opus-4-1", name: "Claude Opus 4.1" }, contextUsage: { percent: 91, tokens: 182_000, contextWindow: 200_000 } } } }] }),
     run: async (ui) => { await ui.chat(); await ui.page.waitForFunction(() => document.querySelector("[data-testid='composer-context']")?.textContent?.includes("91%")); } },
@@ -813,6 +829,13 @@ export const RECIPES = [
       env.listingStub((r) => r.title?.includes(MAIN) ? { status: "waiting", live: true, bridge: true, pendingAsk: { id: "toolu_capture", index: 0, total: 2, question: "Where should the new herdr binary go?", options: ["~/.local/bin/herdr", "Wait for the next release"], recommended: 0 } } : null),
     ] }),
     run: async (ui) => { await ui.chat(); await ui.el("[data-testid='answer-sheet']"); await ui.text("Recommended"); await ui.text("Question 1 of 2"); } },
+  { id: "chat-laptop-form-ask", group: "Live turn", title: "Laptop question (desktop form ask)",
+    note: "omp >= 18.18.3 asks with a form the phone cannot type into: the sheet names the question and sends the user to the computer",
+    setup: (env) => ({ hash: env.chatHash(MAIN), stubs: [
+      { method: "GET", path: "/api/awaiting", body: { ok: true, sessions: [env.path(MAIN)] } },
+      env.listingStub((r) => r.title?.includes(MAIN) ? { status: "waiting", live: true, bridge: true, pendingAsk: { id: "toolu_capture_form", index: 0, total: 1, form: true, question: "Which failures should retry?", options: [] } } : null),
+    ] }),
+    run: async (ui) => { await ui.chat(); await ui.el("[data-testid='answer-sheet'] [data-testid='answer-form']"); await ui.text("Which failures should retry?"); } },
   { id: "live-tool-running", group: "Live turn", title: "Tool running with live output",
     setup: (env) => ({ hash: env.chatHash("tsconfig") }),
     run: async (ui) => {
@@ -847,6 +870,22 @@ export const RECIPES = [
       await ui.click("[data-testid='collab-dialog'] [data-testid='sheet-close']");
       await ui.el("[data-testid='track-strip'] [data-testid='collab-banner']");
       await ui.text("Question");
+    } },
+  { id: "live-ask-checkbox", group: "Live turn", title: "Agent question: checkbox field", note: "a ticked choice, Done selecting as its own button (Nerd Font glyph stripped), and Stop turn because cancelling any field ends the turn",
+    setup: (env) => ({ hash: env.chatHash("tsconfig") }),
+    run: async (ui) => {
+      await ui.chat(); await ui.socket("chat");
+      await ui.frames("chat", ASK_FORM_FRAMES({ method: "select", title: "Retry policy for the webhook client.\n\n(1 selected) Which failures should retry?", options: ["Server errors (5xx)", "Timeouts", "Rate limits (429)", "Other (type your own)", "\uF00C Done selecting"], initialIndex: 0, selectionMarker: "checkbox", checkedIndices: [0], markableCount: 4 }));
+      await ui.el("[data-testid='extension-dialog'] [role='checkbox'][aria-checked='true']");
+      await ui.el("[data-testid='extension-dialog-stop']");
+    } },
+  { id: "live-ask-blank-field", group: "Live turn", title: "Agent question: optional text field", note: "an empty optional field can be left blank instead of ending the turn",
+    setup: (env) => ({ hash: env.chatHash("tsconfig") }),
+    run: async (ui) => {
+      await ui.chat(); await ui.socket("chat");
+      await ui.frames("chat", ASK_FORM_FRAMES({ method: "input", title: "Retry policy for the webhook client.\n\nAnything else I should know?" }));
+      await ui.el("[data-testid='extension-dialog-input']");
+      await ui.text("Leave blank");
     } },
   { id: "chat-track-strip", group: "Live turn", title: "Tab badges and the question chip", note: "question chip, tasks 2 left, two running agents, 2 changed files",
     setup: (env) => ({ hash: env.chatHash("tsconfig"), stubs: [{ method: "GET", path: "/api/changes", body: { ok: true, cwd: "/tmp/omp-ux-cwd", repoRoot: "/tmp/omp-ux-cwd", branch: "main", notRepo: false, truncated: false, totals: { files: 2, additions: 120, deletions: 34 }, files: [

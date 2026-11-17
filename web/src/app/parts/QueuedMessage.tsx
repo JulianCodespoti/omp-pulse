@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useContext, useEffect, useReducer, useRef, useState } from "react";
-import { CircleAlertIcon, ClockIcon, PencilIcon, RotateCwIcon, SearchIcon, XIcon } from "lucide-react";
+import { CircleAlertIcon, ClockIcon, PencilIcon, RotateCwIcon, SearchIcon, Trash2Icon, XIcon } from "lucide-react";
 
 import { Spinner } from "@/components/ui/spinner";
 import { showErrorToast, showToast } from "@/app/Notices";
 import { useLinkIndicator } from "@/app/link-hooks";
-import { UNCERTAIN_HINT, UNCERTAIN_LABEL, failedSendHint } from "@/app/send-copy";
+import { EDIT_KEPT_NOTICE, UNCERTAIN_HINT, UNCERTAIN_LABEL } from "@/app/send-copy";
 import { humanizeReceiptError } from "@/app/ui/OwnedBySession";
 import { ConfirmSheet } from "@/app/ui/Sheet";
 import { errorRecoveryAction } from "@/app/ui/error-recovery";
@@ -73,19 +73,56 @@ export function sendPhase(entry: QueuedPrompt, old: boolean, linkDown: boolean):
 }
 
 /**
+ * The one route that removes a send: its outbox entry first, then its
+ * optimistic `local:<commandId>` echo in the same step, by exact command ID.
+ * Every Discard/Remove/Edit goes through here so none can leave the echo
+ * behind. Resolves false, touching nothing, when the entry could not be
+ * removed (`cancel` resolves false once the intent has moved on): callers
+ * must tell the user rather than let the row quietly return.
+ */
+export async function removeSend(
+  commandId: string,
+  cancel: () => Promise<boolean>,
+  dropEcho: ((commandId: string) => void) | undefined,
+): Promise<boolean> {
+  if (!await cancel()) return false;
+  dropEcho?.(commandId);
+  return true;
+}
+
+export interface UndoableDiscard {
+  hidden: ReadonlySet<string>;
+  discard: (id: string, cancel: () => Promise<unknown>) => void;
+}
+
+/**
  * Discards that can be taken back. The item is hidden at once and only really
  * cancelled when the grace period ends, so Undo restores it with its photos
  * and receipt intact; re-queueing or restoring to the composer could not keep
- * both. A discard already made must not be lost when the owner unmounts.
+ * both. A discard already made must not be lost when the owner unmounts, nor
+ * when the page is hidden: a WebView suspended or killed inside the window
+ * never runs the timer, and the row came back on the next launch.
+ *
+ * The owner decides what "hidden" covers: the composer's queue stack hides a
+ * row, the transcript hides the whole user turn that owns the failed send's
+ * echo (a pill-only hide left the bubble reading as a normally sent message
+ * for the whole undo window).
  */
-export function useUndoableDiscard(): {
-  hidden: ReadonlySet<string>;
-  discard: (id: string, cancel: () => Promise<unknown>) => void;
-} {
+export function useUndoableDiscard(): UndoableDiscard {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
   const timers = useRef(new Map<string, { timer: number; fire: () => void }>());
-  useEffect(() => () => {
-    for (const { timer, fire } of timers.current.values()) { window.clearTimeout(timer); fire(); }
+  useEffect(() => {
+    const commit = () => {
+      for (const { timer, fire } of [...timers.current.values()]) { window.clearTimeout(timer); fire(); }
+    };
+    const onVisibility = () => { if (document.visibilityState === "hidden") commit(); };
+    window.addEventListener("pagehide", commit);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", commit);
+      document.removeEventListener("visibilitychange", onVisibility);
+      commit();
+    };
   }, []);
   const discard = useCallback((id: string, cancel: () => Promise<unknown>) => {
     const unhide = () => setHidden((ids) => { const next = new Set(ids); next.delete(id); return next; });
@@ -118,8 +155,14 @@ export function useUndoableDiscard(): {
  * restore from the row's own retained bytes. The draft is saved first and the
  * row removed only after, so a failed save loses nothing. Photos that were not
  * retained refuse the edit rather than silently coming back without them.
+ * When the row cannot then be removed (the send moved on) the draft stays
+ * restored, by design, and the user is told the original was kept too.
  */
-export async function editFailedSend(entry: QueuedPrompt, cancel: () => Promise<boolean>): Promise<void> {
+export async function editFailedSend(
+  entry: QueuedPrompt,
+  cancel: () => Promise<boolean>,
+  dropEcho: ((commandId: string) => void) | undefined,
+): Promise<void> {
   const namespace = getOfflineQueueNamespace();
   const images = entry.imageCount > 0 ? await getImages(entry.commandId, namespace) : [];
   if (entry.droppedImages || images.length !== entry.imageCount)
@@ -128,7 +171,7 @@ export async function editFailedSend(entry: QueuedPrompt, cancel: () => Promise<
   const notice = await restoreWithdrawnDraft(
     entry.sessionPath, { messages: [{ text: entry.text, images }], imagesDropped: false, truncated: false }, namespace, recoveryId,
   );
-  await cancel();
+  if (!await removeSend(entry.commandId, cancel, dropEcho)) { showToast(EDIT_KEPT_NOTICE); return; }
   if (notice) showToast(notice);
 }
 
@@ -140,13 +183,16 @@ export async function editFailedSend(entry: QueuedPrompt, cancel: () => Promise<
 export function QueuedMessage({
   entry,
   onCancel,
+  onDiscard,
   onRetry,
   onEdit,
   reason,
 }: {
   entry: QueuedPrompt;
-  /** Resolves when the row is really gone, so a discard can hide it until then. */
+  /** Removes a saved or unconfirmed send (the latter after its confirmation). */
   onCancel: () => unknown;
+  /** Starts the undoable discard of a failed send; the owner hides what it owns. */
+  onDiscard: () => void;
   onRetry: () => void;
   /** Puts a failed message back in the composer. */
   onEdit: () => unknown;
@@ -155,7 +201,6 @@ export function QueuedMessage({
   const transcriptActions = useContext(TranscriptActionsContext);
   const [discard, setDiscard] = useState<{ cancel: () => void } | null>(null);
   useEffect(() => setDiscard(null), [entry.commandId, entry.state, entry.updatedAt]);
-  const undoable = useUndoableDiscard();
   const isOld = useSlowSend([entry]);
   const linkDown = useSendLinkDown();
   const old = isOld(entry);
@@ -166,7 +211,6 @@ export function QueuedMessage({
   // transcript is the receipt, and "Not sent" would read as a lost message.
   if (entry.state === "failed" && turnOutcome(entry)) return null;
   if (!busy && entry.state !== "saved" && entry.state !== "dispatching" && entry.state !== "uncertain" && entry.state !== "failed") return null;
-  if (undoable.hidden.has(entry.commandId)) return null;
   const phase = sendPhase(entry, old, linkDown);
   const sending = phase === "sending" || phase === "retrying";
   const waiting = phase === "waiting";
@@ -189,11 +233,12 @@ export function QueuedMessage({
   const RecoveryIcon = recovery?.icon;
   // Pill labels stay short; the hint says what to do about them. Failed rows
   // offer no Try again (the command ID is spent): Edit puts the message back in
-  // the composer, Remove can be undone. The reason is the computer's own, and
-  // follows the plain statement that the message was not sent. While the link
-  // is down the label already says what is happening, so no hint competes.
+  // the composer, Discard can be undone. The label already says the message was
+  // not sent, so a failed row's paragraph is the computer's own reason and
+  // appears only when there is one. While the link is down the label already
+  // says what is happening, so no hint competes.
   const hint = entry.state === "uncertain" ? UNCERTAIN_HINT
-    : entry.state === "failed" ? failedSendHint(why)
+    : entry.state === "failed" ? (why || undefined)
     : waiting ? undefined
     : slow ? "This message wasn’t sent. Try again, or remove it."
     : undefined;
@@ -243,13 +288,16 @@ export function QueuedMessage({
           {recovery.label}
         </button>
       ) : null}
-      {entry.state !== "dispatching" && !busy ? (
+      {entry.state === "failed" ? (
+        <button type="button" className={textButton} aria-label="Discard" onClick={onDiscard}>
+          <Trash2Icon aria-hidden className="size-4 shrink-0" />
+          Discard
+        </button>
+      ) : entry.state !== "dispatching" && !busy ? (
         <button
           type="button"
           aria-label="Remove"
-          onClick={() => entry.state === "uncertain" ? setDiscard({ cancel: onCancel })
-            : entry.state === "failed" ? undoable.discard(entry.commandId, async () => { await onCancel(); })
-            : onCancel()}
+          onClick={() => entry.state === "uncertain" ? setDiscard({ cancel: onCancel }) : onCancel()}
           className="relative -my-3 -mr-2 ml-auto flex size-[48px] shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none active:bg-surface-3 focus-visible:ring-2 focus-visible:ring-ring"
         >
           <XIcon aria-hidden className="size-4" />

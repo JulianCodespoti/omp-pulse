@@ -129,3 +129,9 @@ test('new pairing cannot display or resurrect an older terminal submission',asyn
  await f.act(async()=>f.requests[0].resolve({delivery:'handoff'}));
  assert.equal(f.el('terminal-response-input').value,'New private response');assert.equal(f.el('terminal-response-input').disabled,false);assert.equal(f.el('terminal-response-saved')===null,true);
 });
+test('a form ask offers no way to type an answer, only the way to the session',async t=>{
+ // omp >= 18.18.3 asks with one HTML form; the daemon refuses to type into it, so the sheet must not invite a reply.
+ const f=await fixture(t,session({pendingAsk:{id:'form1',index:0,total:1,question:'Which store?',options:[],form:true}}));
+ assert.match(f.el('answer-form').textContent,/form/);assert.match(f.w.document.body.textContent,/Which store\?/);
+ for(const id of ['answer-text-input','answer-send-button','answer-options','terminal-response-start','answer-unidentified'])assert.equal(f.el(id),null,id);
+});

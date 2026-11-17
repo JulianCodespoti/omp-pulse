@@ -282,10 +282,18 @@ pub fn last_model(path: &Path) -> Option<String> {
 }
 /// An unanswered `ask` tool call. `question`/`options`/`recommended` are the
 /// FIRST question (what a notification names); `questions` is all of them,
-/// in order. omp asks them one after another in a single call, and the file
-/// records nothing until the last is answered, so the phone must know every
-/// question up front: showing only the first made a second tap silently
-/// answer question 2 with an option meant for question 1.
+/// in order. omp < 18.18.3 asked them one after another in a single call
+/// (`arguments.questions[]`), and the file records nothing until the last is
+/// answered, so the phone must know every question up front: showing only the
+/// first made a second tap silently answer question 2 with an option meant
+/// for question 1.
+///
+/// omp 18.18.3 replaced `questions[]` with ONE HTML form (`arguments.html`).
+/// Its fields are not recoverable as pickable options from the markup, so a
+/// form ask (`form: true`) carries a single `questions` entry naming the
+/// first field and no options. The laptop TUI shows a form dialog, not the
+/// old Ask picker, so nothing may type picker keystrokes into it; the phone
+/// can only point the user at the computer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingAsk {
     pub call_id: String,
@@ -294,6 +302,8 @@ pub struct PendingAsk {
     /// Index into `options` the agent marked as its recommendation.
     pub recommended: Option<usize>,
     pub questions: Vec<AskQuestion>,
+    /// An omp >= 18.18.3 HTML-form ask rather than `questions[]`.
+    pub form: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,7 +323,8 @@ pub struct AskQuestion {
 /// consult this for sessions already in `waiting`, where the tail IS the
 /// pending state. Torn/empty lines skipped; unreadable files yield None.
 /// Mirrors the extension's own question choice: the FIRST question's text
-/// (`askBlockedMessage` uses `questions[0]` too).
+/// (`askBlockedMessage` uses `questions[0]` too); for an omp >= 18.18.3 HTML
+/// form ask, the first field's question (see [`PendingAsk`]).
 ///
 /// omp writes the call as a `toolCall` block INSIDE the assistant message's
 /// `content[]`. This used to match only a top-level `{"type":"toolCall"}`
@@ -398,6 +409,27 @@ fn ask_from_call(
     if answered.contains(id) {
         return Some(None);
     }
+    // omp 18.18.3+: the whole ask is one HTML form, not `questions[]`.
+    if let Some(html) = call
+        .get("arguments")
+        .and_then(|a| a.get("html"))
+        .and_then(Value::as_str)
+    {
+        let question = form_question(html, MAX_QUESTION);
+        return Some(Some(PendingAsk {
+            call_id: id.to_string(),
+            question: question.clone(),
+            options: Vec::new(),
+            recommended: None,
+            questions: vec![AskQuestion {
+                question,
+                options: Vec::new(),
+                recommended: None,
+                multi: false,
+            }],
+            form: true,
+        }));
+    }
     let parse = |q: &Value| -> Option<AskQuestion> {
         let q = q.as_object()?;
         let question = q
@@ -445,7 +477,136 @@ fn ask_from_call(
         options: first.options,
         recommended: first.recommended,
         questions,
+        form: false,
     }))
+}
+
+/// Shown when a form's markup yields no readable question text.
+const FORM_FALLBACK_QUESTION: &str = "A form needs your answers";
+
+/// The first field's question from an `ask` HTML form, without an HTML
+/// parser: the first non-empty of the first `<legend>`, the last `<p>` before
+/// the first control, the first `<label>`. The answer sheet and notification
+/// only need one readable line saying what omp is asking, not the form.
+fn form_question(html: &str, max: usize) -> String {
+    // ASCII-lowercasing keeps byte offsets identical to `html`, so positions
+    // found in `lower` index the original text.
+    let lower = html.to_ascii_lowercase();
+    let first_control = ["<input", "<select", "<textarea"]
+        .iter()
+        .filter_map(|tag| lower.find(tag))
+        .min()
+        .unwrap_or(lower.len());
+    let legend = element_texts(html, &lower, "legend")
+        .into_iter()
+        .find(|(_, text)| !text.is_empty());
+    let paragraph = element_texts(html, &lower, "p")
+        .into_iter()
+        .rfind(|(start, text)| *start < first_control && !text.is_empty());
+    let label = element_texts(html, &lower, "label")
+        .into_iter()
+        .find(|(_, text)| !text.is_empty());
+    let text = legend
+        .or(paragraph)
+        .or(label)
+        .map(|(_, text)| text)
+        .unwrap_or_else(|| FORM_FALLBACK_QUESTION.to_string());
+    truncate_chars(&text, max)
+}
+
+/// Every `<tag>…</tag>` element as (start offset, readable text). An
+/// unclosed element runs to the end. `tag` must be lowercase.
+fn element_texts(html: &str, lower: &str, tag: &str) -> Vec<(usize, String)> {
+    let open = format!("<{tag}");
+    let close = format!("</{tag}");
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = lower[from..].find(&open) {
+        let start = from + rel;
+        let after = start + open.len();
+        // `<p` must not match `<pre`, `<param`: the next byte ends the name.
+        let ends_name = lower
+            .as_bytes()
+            .get(after)
+            .is_some_and(|b| *b == b'>' || *b == b'/' || b.is_ascii_whitespace());
+        if !ends_name {
+            from = after;
+            continue;
+        }
+        let Some(gt) = lower[after..].find('>') else {
+            break;
+        };
+        let body = after + gt + 1;
+        let end = lower[body..].find(&close).map_or(lower.len(), |i| body + i);
+        out.push((start, readable_text(&html[body..end])));
+        from = end.max(body);
+    }
+    out
+}
+
+/// Markup to one line of text: tags dropped, entities decoded (after the
+/// strip, so an escaped `&lt;b&gt;` stays literal text), whitespace collapsed.
+fn readable_text(markup: &str) -> String {
+    let mut stripped = String::with_capacity(markup.len());
+    let mut in_tag = false;
+    for c in markup.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            _ if !in_tag => stripped.push(c),
+            _ => {}
+        }
+    }
+    decode_entities(&stripped)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `&amp; &lt; &gt; &quot; &#39; &nbsp;` and numeric (`&#NN;`, `&#xHH;`)
+/// entities; anything unrecognised is kept as written.
+fn decode_entities(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        let decoded = rest
+            .find(';')
+            .filter(|&semi| semi <= 10)
+            .and_then(|semi| entity_char(&rest[1..semi]).map(|c| (c, semi)));
+        match decoded {
+            Some((c, semi)) => {
+                out.push(c);
+                rest = &rest[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn entity_char(name: &str) -> Option<char> {
+    match name {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "nbsp" => Some(' '),
+        _ => {
+            let num = name.strip_prefix('#')?;
+            let code = match num.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => num.parse().ok()?,
+            };
+            char::from_u32(code)
+        }
+    }
 }
 
 /// Truncate to `max` chars (not bytes — notification bodies and sheet rows
@@ -572,6 +733,71 @@ mod tests {
         );
         let p = scratch("ask-nested-answered", &answered);
         assert!(pending_ask(&p).is_none());
+    }
+
+    #[test]
+    fn pending_ask_recognises_an_html_form() {
+        // omp 18.18.3 replaced `questions[]` with `arguments.html`; without
+        // this the session read as an ask with no question and the daemon
+        // typed Ask-picker keys into the laptop's form dialog.
+        let html =
+            "<form><p>Pick a store</p><select name=\\\"db\\\"><option>A</option></select></form>";
+        let content = format!(
+            "{{\"type\":\"message\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"toolCall\",\"id\":\"f1\",\"name\":\"ask\",\"arguments\":{{\"html\":\"{html}\"}}}}]}}}}\n"
+        );
+        let p = scratch("ask-form", &content);
+        let ask = pending_ask(&p).expect("form ask pending");
+        assert!(ask.form);
+        assert_eq!(ask.call_id, "f1");
+        assert_eq!(ask.question, "Pick a store");
+        assert!(ask.options.is_empty());
+        assert_eq!(ask.questions.len(), 1);
+        let old = scratch(
+            "ask-not-form",
+            "{\"type\":\"toolCall\",\"id\":\"o\",\"name\":\"ask\",\"arguments\":{\"questions\":[{\"id\":\"q\",\"question\":\"Q?\"}]}}\n",
+        );
+        assert!(!pending_ask(&old).expect("old ask").form);
+    }
+
+    #[test]
+    fn form_question_prefers_legend_then_paragraph_then_label() {
+        let q = |html: &str| form_question(html, 500);
+        assert_eq!(
+            q(
+                "<p>Context</p><fieldset><legend> Which <b>DB</b>? </legend><input type=radio></fieldset>"
+            ),
+            "Which DB?"
+        );
+        // The LAST paragraph before the first control is the question; a
+        // later paragraph (after the control) and `<pre>` are not.
+        assert_eq!(
+            q("<p>Intro</p><pre>code</pre><p>Ready to ship?</p><input type=checkbox><p>after</p>"),
+            "Ready to ship?"
+        );
+        assert_eq!(
+            q("<form><label for=a>Your name</label><input id=a></form>"),
+            "Your name"
+        );
+        assert_eq!(q("<form><input></form>"), FORM_FALLBACK_QUESTION);
+        assert_eq!(q(""), FORM_FALLBACK_QUESTION);
+    }
+
+    #[test]
+    fn form_question_decodes_entities_and_caps_length() {
+        assert_eq!(
+            form_question(
+                "<p>Tom &amp; Jerry &lt;3 &quot;cheese&quot;&nbsp;it&#39;s &#x2714; &bogus; AT&T</p><input>",
+                500
+            ),
+            "Tom & Jerry <3 \"cheese\" it's \u{2714} &bogus; AT&T"
+        );
+        // Escaped markup stays text rather than being stripped as a tag.
+        assert_eq!(
+            form_question("<p>&lt;b&gt;x&lt;/b&gt;</p>", 500),
+            "<b>x</b>"
+        );
+        let long = format!("<p>{}</p>", "é".repeat(600));
+        assert_eq!(form_question(&long, 500).chars().count(), 500);
     }
 
     #[test]

@@ -48,6 +48,38 @@ test('ask cancellation is a quiet, confirmed Stop turn; declining an unrelated i
  await f.click('extension-dialog-stop-confirm');assert.equal(f.requests[0].response.cancelled,true);
  await f.show('/a',{id:'input',method:'input',title:'Extension prompt'});assert.equal(f.el('extension-dialog-skip').textContent.trim(),'Skip question');assert.equal(f.el('extension-dialog-stop'),null);
 });
+const askRunning=[{id:'u',role:'user',text:'go',parts:[]},{id:'a',role:'assistant',text:'',parts:[{kind:'tool',callId:'c',name:'ask',args:{},state:'running'}]}];
+test('a select raised by a running ask form needs a confirmed Stop turn; without one it says Skip question',async t=>{
+ const select={id:'s',method:'select',title:'Pick one',options:['A','B']};
+ const f=await fixture(t,select);assert.equal(f.el('extension-dialog-skip').textContent.trim(),'Skip question');assert.equal(f.el('extension-dialog-stop'),null);
+ // omp ends the message carrying the call only later: the running ask is still in streamingMessage.
+ await f.act(async()=>f.store.setState({messages:askRunning.slice(0,1),streamingMessage:askRunning[1]}));
+ assert.equal(f.el('extension-dialog-stop').textContent.trim(),'Stop turn');
+ await f.act(async()=>f.store.setState({messages:askRunning,streamingMessage:null}));
+ assert.equal(f.el('extension-dialog-stop').textContent.trim(),'Stop turn');assert.equal(f.el('extension-dialog-skip'),null);
+ await f.click('extension-dialog-stop');assert.equal(f.requests.length,0,'the first tap only asks');
+ await f.click('extension-dialog-stop-confirm');assert.equal(f.requests[0].response.cancelled,true);
+});
+test('a checkbox select shows host ticks and a separate action sends the exact glyph-prefixed label',async t=>{
+ const done='\uF00C Done selecting';
+ const f=await fixture(t,{id:'c',method:'select',title:'Which?',options:['Auth','Cache','Other (type your own)',done],selectionMarker:'checkbox',checkedIndices:[1],markableCount:2});
+ const boxes=[...f.w.document.querySelectorAll('[data-testid="extension-dialog-option"]')];
+ assert.deepEqual(boxes.map(b=>b.getAttribute('role')),['checkbox','checkbox']);
+ assert.deepEqual(boxes.map(b=>b.getAttribute('aria-checked')),['false','true']);
+ const actions=[...f.w.document.querySelectorAll('[data-testid="extension-dialog-action"]')];
+ assert.deepEqual(actions.map(a=>a.textContent.trim()),['Other (type your own)','Done selecting']);
+ await f.act(async()=>boxes[0].click());assert.equal(f.requests[0].response.value,'Auth');
+ await f.act(async()=>f.requests[0].resolve());
+ await f.show('/a',{id:'c2',method:'select',title:'Which?',options:['Auth',done],selectionMarker:'checkbox',checkedIndices:[],markableCount:1});
+ await f.act(async()=>f.w.document.querySelector('[data-testid="extension-dialog-action"]').click());assert.equal(f.requests.at(-1).response.value,done);
+});
+test('a blank input may be left blank explicitly; Enter on a blank box does nothing',async t=>{
+ const f=await fixture(t,{id:'i',method:'input',title:'Optional note'});
+ const send=f.el('extension-dialog-send');assert.equal(send.textContent.trim(),'Leave blank');assert.equal(send.disabled,false);
+ await f.act(async()=>f.el('extension-dialog-input').dispatchEvent(new f.w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})));assert.equal(f.requests.length,0);
+ await f.click('extension-dialog-send');assert.equal(f.requests[0].response.value,'');
+ const g=await fixture(t,{id:'i2',method:'input',title:'Note'});await g.type('extension-dialog-input','Hello');assert.equal(g.el('extension-dialog-send').textContent.trim(),'Send');
+});
 test('hide/reopen and session round-trip keep the draft; stale failure cannot alter another owner',async t=>{
  const request={id:'reused',method:'input',title:'Type an answer'},f=await fixture(t,request);await f.type('extension-dialog-input','Keep this');
  await f.click('sheet-close');await f.act(async()=>f.w.dispatchEvent(new f.w.Event('extension-dialog:show')));assert.equal(f.el('extension-dialog-input').value,'Keep this');

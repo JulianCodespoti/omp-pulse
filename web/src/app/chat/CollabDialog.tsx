@@ -15,6 +15,9 @@ import { EmptyState } from "../ui/EmptyState";
 import { Notice } from "../ui/Notice";
 import { Row, RowGroup } from "../ui/Row";
 import { BottomSheet } from "../ui/Sheet";
+import { ALERT_CANCEL, ALERT_DESTRUCTIVE, ConfirmDialog } from "../ui/GroupedList";
+import { askToolRunning } from "../../domain/ask-running";
+import { displayOptionLabel } from "../../runtime/extension-dialogs";
 
 // omp's ask tool marks the recommended option by appending this suffix to its
 // label (tools/ask.ts RECOMMENDED_SUFFIX) and strips it from the answer, so the
@@ -49,6 +52,10 @@ export function CollabDialog({ controller, onPendingChange }: CollabDialogProps)
   const textValue = typeof currentAnswer?.value === "string" ? currentAnswer.value : collabRequest?.initialValue ?? "";
   const [hiddenIdentity, setHiddenIdentity] = useState<string | null>(null);
   const isHidden = hiddenIdentity === identity;
+  // omp aborts the turn when any field of an `ask` form is cancelled (since
+  // 18.18.3), so a skip while one runs is really "Stop turn", confirmed first.
+  const askRunning = useStoreValue(store, (s) => askToolRunning(s.messages, s.streamingMessage));
+  const [confirmStopIdentity, setConfirmStopIdentity] = useState<string | null>(null);
   const [owner, setOwner] = useState(controller);
   if (owner !== controller) {
     setOwner(controller);
@@ -84,13 +91,14 @@ export function CollabDialog({ controller, onPendingChange }: CollabDialogProps)
   const isChoice = kind === "choice" || kind === "confirm";
   const multi = collabRequest.selectionMarker === "checkbox";
   const markableCount = collabRequest.markableCount ?? options?.length ?? 0;
-  // A blank text answer is never sent (Enter sent "" with no sign of it). An
-  // editor may be deliberately emptied, as ExtensionDialogSheet allows for its editor.
+  // A blank text answer is a valid answer for an optional field, but only via
+  // the explicit "Leave blank" button: Enter on an empty box does nothing, since
+  // it sent "" with no sign of it. An editor may be deliberately emptied too.
   const blankText = kind === "text" && !textValue.trim();
   const sending = currentAnswer?.phase === "sending";
   const optionRow = (opt: NonNullable<typeof options>[number], idx: number): JSX.Element => {
     const recommended = opt.label.endsWith(RECOMMENDED_SUFFIX);
-    const label = recommended ? opt.label.slice(0, -RECOMMENDED_SUFFIX.length) : opt.label;
+    const label = displayOptionLabel(recommended ? opt.label.slice(0, -RECOMMENDED_SUFFIX.length) : opt.label);
     const toggle = multi && idx < markableCount;
     const checked = toggle && (collabRequest.checkedIndices?.includes(idx) ?? false);
     return <Row
@@ -111,6 +119,7 @@ export function CollabDialog({ controller, onPendingChange }: CollabDialogProps)
   };
 
   return (
+    <>
     <BottomSheet
       open={!isHidden}
       onOpenChange={(next) => {
@@ -119,8 +128,14 @@ export function CollabDialog({ controller, onPendingChange }: CollabDialogProps)
       title="Question"
       testId="collab-dialog"
       footer={
-        <Button variant="ghost" className="w-full" disabled={isHeld} onClick={() => send(null)} data-testid="collab-skip">
-          Skip question
+        <Button
+          variant="ghost"
+          className="w-full"
+          disabled={isHeld}
+          onClick={() => (askRunning ? setConfirmStopIdentity(identity) : send(null))}
+          data-testid="collab-skip"
+        >
+          {askRunning ? "Stop turn" : "Skip question"}
         </Button>
       }
     >
@@ -181,16 +196,18 @@ export function CollabDialog({ controller, onPendingChange }: CollabDialogProps)
             )}
             <Button
               variant="primary"
-              size={sending ? "md" : "icon"}
-              aria-label={sending ? "Sending answer" : "Send answer"}
-              disabled={isHeld || blankText}
-              onClick={() => send(textValue)}
+              size={sending || blankText ? "md" : "icon"}
+              aria-label={sending ? "Sending answer" : blankText ? "Leave blank" : "Send answer"}
+              disabled={isHeld}
+              onClick={() => send(blankText ? "" : textValue)}
             >
               {sending ? (
                 <>
                   <Spinner size={14} label={null} />
                   Sending…
                 </>
+              ) : blankText ? (
+                "Leave blank"
               ) : (
                 <>
                   {currentAnswer?.phase === "rejected" ? <span className="sr-only">Retry answer</span> : null}
@@ -202,5 +219,28 @@ export function CollabDialog({ controller, onPendingChange }: CollabDialogProps)
         )}
       </div>
     </BottomSheet>
+    <ConfirmDialog
+      open={confirmStopIdentity === identity}
+      onOpenChange={(next) => { if (!next) setConfirmStopIdentity(null); }}
+      title="Stop the agent's turn?"
+      description="Declining this question ends the turn the agent is working on. To answer later, close this sheet instead."
+      actions={
+        <>
+          <button
+            type="button"
+            className={ALERT_DESTRUCTIVE}
+            disabled={isHeld}
+            data-testid="collab-stop-confirm"
+            onClick={() => { setConfirmStopIdentity(null); send(null); }}
+          >
+            Stop turn
+          </button>
+          <button type="button" className={ALERT_CANCEL} onClick={() => setConfirmStopIdentity(null)}>
+            Keep question
+          </button>
+        </>
+      }
+    />
+    </>
   );
 }

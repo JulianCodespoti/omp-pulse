@@ -25,6 +25,9 @@ import {pendingIntentActions} from ${JSON.stringify(resolve(root,'web/src/runtim
 import {projectPendingIntents} from ${JSON.stringify(resolve(root,'web/src/runtime/browser-pending-presentation.ts'))};
 import {usesNativeOutbox,acknowledgeNativeSave} from ${JSON.stringify(resolve(root,'web/src/runtime/native-outbox.ts'))};
 import {MessageParts} from ${JSON.stringify(resolve(root,'web/src/app/parts/MessageParts.tsx'))};
+import {TranscriptActionsContext} from ${JSON.stringify(resolve(root,'web/src/app/parts/TurnNotices.tsx'))};
+import {withLocalSendOwner} from ${JSON.stringify(resolve(root,'web/src/domain/local-send-provenance.ts'))};
+import {createUserMessage} from ${JSON.stringify(resolve(root,'web/src/domain/messages.ts'))};
 import {bindUserRowStatus} from ${JSON.stringify(resolve(root,'web/src/runtime/user-row-status.ts'))};
 DaemonApi.prototype.getPromptConfig=async()=>({magicKeywords:[]});
 DaemonApi.prototype.transcribe=()=>new Promise(resolve=>window.fixture.finishTranscription=resolve);
@@ -39,11 +42,12 @@ const entries=useSyncExternalStore(queue.subscribe,queue.getSnapshot,queue.getSe
 const state=useSyncExternalStore(store.subscribe,store.getState,store.getState);
 const projection=projectPendingIntents(state.messages,entries,view.path,view.namespace,controller,usesNativeOutbox()?'native':'browser',state.queuedMessages);
 const statuses=bindUserRowStatus(projection.messages,entries,view.path,!usesNativeOutbox());
-return h('div',null,h('section',{'data-testid':'projected-transcript'},projection.messages.map(message=>h(MessageParts,{key:message.id,message,sessionPath:view.path,rowStatus:statuses.get(message.id),localPendingEntry:projection.localEntries.get(message)}))),h(Composer,{key:view.namespace+view.path,sessionPath:view.path,controller,pendingSends:projection.pending,busy:true,
+return h('div',null,h(TranscriptActionsContext.Provider,{value:{switchModel(){},editPrompt(){},stopTurn:async()=>{},dropOptimisticEcho:id=>store.getState().dropOptimisticEcho(id)}},h('section',{'data-testid':'projected-transcript'},projection.messages.map(message=>h(MessageParts,{key:message.id,message,sessionPath:view.path,rowStatus:statuses.get(message.id),localPendingEntry:projection.localEntries.get(message)})))),h(Composer,{key:view.namespace+view.path,sessionPath:view.path,controller,pendingSends:projection.pending,busy:true,
 commands:[{name:'compact',description:'Compact conversation',source:'builtin',shape:'immediate'},{name:'model',description:'Choose model',source:'builtin',shape:'pick',picker:'model'}],
 onRunCommand:command=>commands.push(command.name),onOpenPicker:picker=>pickers.push(picker),
 onSend:async(...args)=>{sends.push(args);if(window.fixture.nativeSave){const [text,images,sessionPath,onSaved]=args;const entry=await queue.enqueue({text,images,sessionPath,namespace:getDraftNamespace()});if(await onSaved())acknowledgeNativeSave(entry,getDraftNamespace());}},onStop:()=>{}}),h(Notices));}
 window.fixture={act,queue,controller,store,requests,sends,commands,pickers,getDraftNamespace,readDraft,seedDraft,flushAllDraftWrites,parseWithdrawnQueue,pendingIntentActions,projectPendingIntents,acknowledgeNativeSave,
+ownedEcho:(entry,scope)=>store.getState().appendMessage(withLocalSendOwner(createUserMessage(entry.text,entry.commandId,entry.createdAt),entry,scope,controller,()=>true)),
 durable:(path='/a',options={})=>sendPromptDurably(path,'recovered',[],{token:localStorage.getItem('omp-remote-token'),...options}),
 owner:(path='/a',namespace=getDraftNamespace())=>getAttachmentDraft(namespace,path),
 restore:(path,withdrawn,namespace=getDraftNamespace(),id)=>restoreWithdrawnDraft(path,withdrawn,namespace,id),
@@ -249,10 +253,22 @@ test('photo-only saved browser outbox Edit merges without introducing text',asyn
 test('a failed send is edited back into the composer with its photos, and its row goes',async t=>{
   const c=await fixture(t,{text:'kept',native:true});let entry;
   await c.act(async()=>{entry=await c.seed('failed-native','Lost words',[PHOTO]);Object.assign(c.nativeRows.get(entry.commandId),{state:'failed',error:'agent_rejected: Synthetic refusal'});await c.f.queue.flush(()=>{throw Error('No browser dispatch')},{namespace:c.namespace,isTransient:()=>false})});
-  assert.match(c.w.document.body.textContent,/This message wasn’t sent\./);
+  assert.match(c.w.document.body.textContent,/Not sent/);assert.doesNotMatch(c.w.document.body.textContent,/wasn’t sent/);
   await c.click('Edit');
   assert.equal(c.input().value,'Lost words\n\nkept');assert.equal(c.photos().length,1);
   assert.equal(c.nativeRows.has(entry.commandId),false);assert.equal(c.f.sends.length,0);
+});
+
+test('a failed send removed from a bare MessageParts takes its bubble with it',async t=>{
+  const c=await fixture(t,{native:true});let entry;
+  await c.act(async()=>{entry=await c.seed('failed-echo','Hello again');Object.assign(c.nativeRows.get(entry.commandId),{state:'failed',error:'agent_rejected: Synthetic refusal'});await c.f.queue.flush(()=>{throw Error('No browser dispatch')},{namespace:c.namespace,isTransient:()=>false})});
+  await c.act(async()=>c.f.ownedEcho(await c.f.queue.getQueued(entry.commandId,c.namespace),c.namespace));
+  const transcript=()=>c.w.document.querySelector('[data-testid="projected-transcript"]');
+  assert.match(transcript().textContent,/Hello again/);assert.match(transcript().textContent,/Not sent/);
+  await c.click('Discard');
+  assert.equal(c.nativeRows.has(entry.commandId),false);
+  assert.equal(c.f.store.getState().messages.some(message=>message.id==='local:failed-echo'),false);
+  assert.equal(transcript().textContent,'','the bubble goes with its send');
 });
 
 test('over-capacity recovery retains every photo through remount and blocks Send until reduced',async t=>{

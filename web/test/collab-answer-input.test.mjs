@@ -74,15 +74,26 @@ test('text button preserves exact value and keeps the online question through ha
 for(const kind of ['choice','confirm'])test(`${kind} retains exact option value`,async t=>{
  const f=await fixture(t,{req:request({kind,options:[{label:'Yes (Recommended)',value:'yes'}]})});assert.equal(f.el('collab-option').textContent.includes('(Recommended)'),false);assert.ok(f.el('collab-recommended'));await f.click('[data-testid="collab-option"]');assert.equal(f.frames.length,1);assert.equal(f.frames[0].value,'yes');
 });
-test('a blank text answer cannot be sent by Enter or the button; sending shows its state',async t=>{
+test('a blank text answer is only sent by the explicit Leave blank button, never by Enter; sending shows its state',async t=>{
  const f=await fixture(t);await f.key({});assert.equal(f.calls.length,0);
- assert.equal(f.w.document.querySelector('button[aria-label="Send answer"]').disabled,true);
- await f.type('   ');await f.key({});assert.equal(f.calls.length,0);assert.equal(f.w.document.querySelector('button[aria-label="Send answer"]').disabled,true);
- await f.type('Real');await f.click('button[aria-label="Send answer"]');assert.equal(f.calls.length,1);
+ const blank=()=>f.w.document.querySelector('button[aria-label="Leave blank"]');
+ assert.equal(blank().disabled,false);assert.equal(blank().textContent.trim(),'Leave blank');
+ await f.type('   ');await f.key({});assert.equal(f.calls.length,0);
+ await f.click('button[aria-label="Leave blank"]');assert.equal(f.calls.length,1);assert.equal(f.frames[0].value,'');
+});
+test('typed text sends via Send answer and shows its sending state',async t=>{
+ const f=await fixture(t);await f.type('Real');await f.click('button[aria-label="Send answer"]');assert.equal(f.calls.length,1);
  assert.match(f.w.document.querySelector('button[aria-label="Sending answer"]').textContent,/Sending…/);
 });
 test('explicit cancellation sends null without pretending transport submission is acceptance',async t=>{
- const f=await fixture(t);await f.click('[data-testid="collab-skip"]');assert.equal(f.frames[0].value === null, true);assert.equal(f.store().getState().collabRequest.reqId,7);assert.equal(f.store().getState().collabAnswer.phase,'sending');
+ const f=await fixture(t);assert.equal(f.el('collab-skip').textContent.trim(),'Skip question');await f.click('[data-testid="collab-skip"]');assert.equal(f.frames[0].value === null, true);assert.equal(f.store().getState().collabRequest.reqId,7);assert.equal(f.store().getState().collabAnswer.phase,'sending');
+});
+test('while an ask tool runs, skipping is a confirmed Stop turn',async t=>{
+ const f=await fixture(t);
+ await f.update({messages:[{id:'u',role:'user',text:'go',parts:[]},{id:'a',role:'assistant',text:'',parts:[{kind:'tool',callId:'c',name:'ask',args:{},state:'running'}]}]});
+ assert.equal(f.el('collab-skip').textContent.trim(),'Stop turn');
+ await f.click('[data-testid="collab-skip"]');assert.equal(f.frames.length,0,'the first tap only asks');
+ await f.click('[data-testid="collab-stop-confirm"]');assert.equal(f.frames[0].value===null,true);
 });
 test('offline answer stays held and disabled through hide/reopen',async t=>{
  const f=await fixture(t,{online:false});await f.type('Hold this');await f.key({});assert.equal(f.calls.length,1);assert.equal(f.frames.length,0);assert.equal(f.store().getState().heldCollabResponse.value,'Hold this');assert.ok(f.store().getState().collabRequest);assert.ok(f.el('collab-held'));assert.equal(f.input().disabled,true);

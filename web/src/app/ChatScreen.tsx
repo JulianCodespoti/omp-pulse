@@ -847,7 +847,8 @@ export const ChatScreen = memo(function ChatScreen({
       if (problem) showToast(problem, "error");
     },
     stopTurn,
-  }), [sessionPath, stopTurn]);
+    dropOptimisticEcho: (commandId) => store.getState().dropOptimisticEcho(commandId),
+  }), [sessionPath, stopTurn, store]);
   // `/plan`, its palette row and the settings switch all land here: plan mode
   // toggles through the daemon's `plan_mode`, never as text the model reads.
   // The tap-time session is captured so a reply cannot land on another chat.
