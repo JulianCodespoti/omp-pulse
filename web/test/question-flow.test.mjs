@@ -99,10 +99,23 @@ test('uncertain send preserves the draft but never enables duplicate dispatch',a
  await f.act(async()=>f.requests[0].reject(new Error('Network lost')));assert.equal(f.el('extension-dialog-input').value,'Exact draft');assert.equal(f.el('extension-dialog-send').disabled,true);
  await f.click('sheet-close');await f.act(async()=>f.w.dispatchEvent(new f.w.Event('extension-dialog:show')));await f.click('extension-dialog-send');assert.equal(f.requests.length,1);
 });
-test('native handoff keeps entered value visible and cannot be submitted twice',async t=>{
- const f=await fixture(t,{id:'native',method:'input',title:'Answer'});await f.type('extension-dialog-input','Keep after handoff');await f.click('extension-dialog-send');
- await f.act(async()=>f.requests[0].resolve({ok:true}));assert.equal(f.store.getState().extensionDialogs.pending.length,1);assert.equal(f.el('extension-dialog-input').value,'Keep after handoff');assert.equal(f.el('extension-dialog-send').disabled,true);
- await f.click('sheet-close');await f.act(async()=>f.w.dispatchEvent(new f.w.Event('extension-dialog:show')));assert.equal(f.el('extension-dialog-input').value,'Keep after handoff');await f.click('extension-dialog-send');assert.equal(f.requests.length,1);
+test('a handed-off answer closes the sheet, leaves no waiting pill and cannot be submitted twice',async t=>{
+ const f=await fixture(t,{id:'native',method:'input',title:'Answer'});await f.type('extension-dialog-input','Sent once');await f.click('extension-dialog-send');
+ await f.act(async()=>f.requests[0].resolve({ok:true}));assert.equal(f.store.getState().extensionDialogs.pending.length,1,'omp has not closed it yet');
+ assert.equal(f.el('extension-dialog'),null);assert.equal(f.el('extension-dialog-reopen'),null);
+ await f.act(async()=>f.w.dispatchEvent(new f.w.Event('extension-dialog:show')));assert.equal(f.el('extension-dialog'),null);assert.equal(f.requests.length,1);
+});
+test('mid-form the sheet stays on the field just answered, never an earlier one, and drops when the ask ends',async t=>{
+ const f=await fixture(t,{id:'f1',method:'select',title:'Which database?',options:['SQLite','Postgres']});
+ await f.act(async()=>f.store.setState({messages:askRunning}));
+ await f.act(async()=>f.w.document.querySelector('[data-testid="extension-dialog-option"]').click());await f.act(async()=>f.requests[0].resolve({ok:true}));
+ await f.act(async()=>f.store.getState().setExtensionDialogs(state=>({...state,pending:[...state.pending,{id:'f2',method:'input',title:'Notes',expiresAt:null}]})));
+ await f.click('extension-dialog-send');await f.act(async()=>f.requests[1].resolve({ok:true}));
+ // Both fields are handed off; omp is still finishing the ask.
+ assert.match(f.el('extension-dialog').textContent,/Notes/);assert.doesNotMatch(f.el('extension-dialog').textContent,/Which database/);
+ assert.match(f.el('extension-dialog').textContent,/Answer sent\./);
+ await f.act(async()=>f.store.setState({messages:[askRunning[0],{...askRunning[1],parts:[{...askRunning[1].parts[0],state:'ok'}]}]}));
+ assert.equal(f.el('extension-dialog'),null);
 });
 test('a retained handoff does not block a different unsent extension dialog',async t=>{
  const f=await fixture(t,{id:'first',method:'input',title:'First'});await f.type('extension-dialog-input','First answer');await f.click('extension-dialog-send');await f.act(async()=>f.requests[0].resolve({ok:true}));
@@ -143,8 +156,7 @@ test('same-socket snapshots keep exact ask drafts and handoffs until authoritati
  await f.click('extension-dialog-submit');
  await f.act(async()=>f.requests[0].resolve({ok:true}));
  await f.act(async()=>f.w.fixture.snapshot([{...request,pulseDelivery:'handoff'}]));
- assert.equal(f.el('extension-dialog-ask-custom').value,retained);
- assert.equal(f.el('extension-dialog-submit').disabled,true);
+ assert.equal(f.el('extension-dialog'),null,'a handed-off ask is answered; the sheet is gone');
  await f.act(async()=>f.w.fixture.snapshot([]));
  assert.equal(f.el('extension-dialog'),null);
  assert.equal(f.store.getState().extensionDialogs.closed.includes('ask'),true);

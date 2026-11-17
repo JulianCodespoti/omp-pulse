@@ -101,8 +101,6 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
   if (owner.current !== controller) { owner.current = controller; ownerEpoch.current += 1; }
   const questionKey = (requestId: string): string => JSON.stringify([ownerEpoch.current, sessionPath, requestId]);
   const [handoffs, setHandoffs] = useState<Record<string, "handoff" | "uncertain" | "stale">>({});
-  const dialog = pending.find((entry) => !entry.delivery && !handoffs[questionKey(entry.id)]) ?? pending[0] ?? null;
-  const hasPending = dialog !== null;
 
   // Include the owner in every draft/attempt key: request ids may be reused by
   // another session, and a late completion must never clear its draft or lock.
@@ -120,6 +118,24 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
   // every dialog raised while one runs must say "Stop turn".
   const askRunning = useStoreValue(store, (s) => askToolRunning(s.messages, s.streamingMessage));
   const [now, setNow] = useState(() => Date.now());
+  // A dialog handed to the session is answered: it is never offered again as
+  // the question to answer. Falling back to `pending[0]` once every dialog was
+  // handed off put an omp >= 18.18.3 form's FIRST field back on screen after
+  // the last answer (and between fields) until the turn ended.
+  const answered = (entry: ExtensionDialog): boolean => !!entry.delivery || !!handoffs[questionKey(entry.id)];
+  const unanswered = pending.filter((entry) => !answered(entry));
+  // Still needs the user's eyes: an answer in flight, refused, or of unknown delivery.
+  const troubled = pending.find((entry) => {
+    const key = questionKey(entry.id);
+    return sendingId === key || entry.delivery === "uncertain" || handoffs[key] === "uncertain"
+      || (!!errors[key] && handoffs[key] !== "stale");
+  });
+  // Mid-form, omp sends the next field moments after an answer: stay on the
+  // field just answered rather than dropping the sheet and reopening it. Once
+  // the ask ends there is nothing left to show.
+  const justAnswered = askRunning ? pending.findLast(answered) : undefined;
+  const dialog = unanswered[0] ?? troubled ?? justAnswered ?? null;
+  const hasPending = unanswered.length > 0 || troubled !== undefined;
 
   useEffect(() => {
     setTexts({}); setAsks({}); setHandoffs({}); setErrors({});
@@ -314,12 +330,12 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
         <div className="space-y-4 pb-2" data-method={dialog.method}>
           {errors[id] ? <ErrorNotice message={errors[id]} testId="extension-dialog-error" /> : null}
           {capacityBlocked ? <ErrorNotice message="64 questions already have retained answers. Finish one before answering another; none of your drafts were removed." testId="extension-dialog-capacity" /> : null}
-          {!errors[id] && (sendingId === id || handoffs[id] || dialog.delivery) ? <p role="status" className="text-meta text-muted-foreground">{handoffs[id] === "uncertain" || dialog.delivery === "uncertain" ? "Delivery is unknown. Your answer is kept." : sendingId === id || dialog.delivery === "sending" ? "Sending answer…" : "Handed to the session. Awaiting a session update."}</p> : null}
+          {!errors[id] && (sendingId === id || handoffs[id] || dialog.delivery) ? <p role="status" className="text-meta text-muted-foreground">{handoffs[id] === "uncertain" || dialog.delivery === "uncertain" ? "Delivery is unknown. Your answer is kept." : sendingId === id || dialog.delivery === "sending" ? "Sending answer…" : "Answer sent."}</p> : null}
           {stopsTurn ? <p className="text-meta text-muted-foreground">Stop turn ends this turn. Close to answer later.</p> : null}
-          {pending.length > 1 || secondsLeft !== null ? (
+          {unanswered.length > 1 || secondsLeft !== null ? (
             <p className="text-caption font-medium tabular-nums text-muted-foreground">
               {[
-                pending.length > 1 ? `1 of ${pending.length} waiting` : null,
+                unanswered.length > 1 ? `1 of ${unanswered.length} waiting` : null,
                 secondsLeft !== null ? `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, "0")} left to answer` : null,
               ]
                 .filter(Boolean)
@@ -525,7 +541,7 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
           </>
         }
       />
-      {!open ? (
+      {!open && hasPending ? (
         <button
           type="button"
           data-testid="extension-dialog-reopen"

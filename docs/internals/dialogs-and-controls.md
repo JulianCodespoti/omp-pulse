@@ -116,6 +116,18 @@ every answered one. Unanswered dialogs are left for omp's own `cancel`. The
 timeline reads a form decision's questions and answers from the result's
 `details.answers`, and its first question from the HTML when the result has none.
 
+An answered dialog is no longer a question. The chat's dialog sheet never shows a
+handed-off dialog as the one to answer: it shows the next unanswered one, else one
+whose delivery is in flight, refused or unknown, else (only while the `ask` call is
+still running, so the sheet does not drop and reopen between fields) the field just
+answered; otherwise it closes, with no "Question waiting" pill. `/api/awaiting` and
+the listing's `waiting` status ignore handed-off child dialogs. A conversation whose
+questions arrive through a collab room never opens the laptop answer sheet by
+itself: between two collab fields, and right after the last, the listing can still
+say `waiting` (herdr's blocked state and the listing poll lag), and that sheet used
+to reappear on the form's first question. A form ask never opens it by itself either,
+since the sheet can only say to answer on the computer.
+
 ## A question must outlive the socket
 
 The desktop broadcasts each `ui-request` exactly ONCE. A phone whose socket is shut

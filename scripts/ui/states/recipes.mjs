@@ -830,12 +830,24 @@ export const RECIPES = [
     ] }),
     run: async (ui) => { await ui.chat(); await ui.el("[data-testid='answer-sheet']"); await ui.text("Recommended"); await ui.text("Question 1 of 2"); } },
   { id: "chat-laptop-form-ask", group: "Live turn", title: "Laptop question (desktop form ask)",
-    note: "omp >= 18.18.3 asks with a form the phone cannot type into: the sheet names the question and sends the user to the computer",
+    note: "omp >= 18.18.3 asks with a form the phone cannot type into: it does not pop up by itself; the question pill opens a sheet that names the question and sends the user to the computer",
     setup: (env) => ({ hash: env.chatHash(MAIN), stubs: [
       { method: "GET", path: "/api/awaiting", body: { ok: true, sessions: [env.path(MAIN)] } },
       env.listingStub((r) => r.title?.includes(MAIN) ? { status: "waiting", live: true, bridge: true, pendingAsk: { id: "toolu_capture_form", index: 0, total: 1, form: true, question: "Which failures should retry?", options: [] } } : null),
     ] }),
-    run: async (ui) => { await ui.chat(); await ui.el("[data-testid='answer-sheet'] [data-testid='answer-form']"); await ui.text("Which failures should retry?"); } },
+    run: async (ui) => { await ui.chat(); await ui.click("[data-testid='track-strip'] [data-testid='collab-banner']"); await ui.el("[data-testid='answer-sheet'] [data-testid='answer-form']"); await ui.text("Which failures should retry?"); } },
+  { id: "chat-collab-question-answered", group: "Live turn", title: "Desktop question answered through collab",
+    note: "the listing still says waiting (herdr and the poll lag), but a collab room delivers the questions: no laptop answer sheet may pop up on the form's first question",
+    setup: (env) => ({ hash: env.chatHash(MAIN), stubs: [
+      { method: "GET", path: "/api/awaiting", body: { ok: true, sessions: [env.path(MAIN)] } },
+      env.listingStub((r) => r.title?.includes(MAIN) ? { status: "waiting", live: true, bridge: true, shared: true, pendingAsk: { id: "toolu_collab", index: 0, total: 1, question: "Which failures should retry?", options: ["Server errors", "Timeouts"] } } : null),
+    ] }),
+    run: async (ui) => {
+      await ui.chat(); await ui.socket("chat");
+      await ui.frames("chat", [ev({ type: "collab_link_state", state: "attached" })]);
+      await ui.sleep(2500);
+      if (await ui.page.$("[data-testid='answer-sheet']")) throw new Error("the laptop answer sheet opened in a collab-delivered session");
+    } },
   { id: "live-tool-running", group: "Live turn", title: "Tool running with live output",
     setup: (env) => ({ hash: env.chatHash("tsconfig") }),
     run: async (ui) => {

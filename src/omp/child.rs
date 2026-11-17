@@ -719,12 +719,19 @@ impl ChildManager {
 
     /// Every session whose child is blocked on a phone answer. The inbox shows a
     /// waiting marker from this, so a question does not stay invisible until the
-    /// user happens to open that conversation.
+    /// user happens to open that conversation. A dialog already answered from a
+    /// phone (`pulseDelivery`) is not waiting for anyone: it stays pending only
+    /// until omp proves it settled, and counting it kept a session under
+    /// "Needs you" after its last question was answered.
     pub fn sessions_awaiting_ui(&self) -> Vec<String> {
         let children = lock_poisoned(&self.children);
         children
             .iter()
-            .filter(|(_, c)| !lock_poisoned(&c.pending_ui).is_empty())
+            .filter(|(_, c)| {
+                lock_poisoned(&c.pending_ui)
+                    .values()
+                    .any(|request| request.get("pulseDelivery").is_none())
+            })
             .map(|(path, _)| path.clone())
             .collect()
     }
