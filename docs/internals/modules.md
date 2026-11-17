@@ -28,7 +28,7 @@ Last verified: 2026-11-18
 | `omp/ansi.rs` | 163 | Terminal escape stripping for text omp prints for a terminal. |
 | `omp/autotitle.rs` | 299 | Titles for conversations the daemon's own RPC children run. |
 | `omp/bridge.rs` | 1419 | Desktop event bridge: the desktop omp streams its OWN agent events here. |
-| `omp/child.rs` | 1592 | ChildManager — lazy-spawned `omp --mode rpc-ui` child processes. |
+| `omp/child.rs` | 1598 | ChildManager — lazy-spawned `omp --mode rpc-ui` child processes. |
 | `omp/child/admission.rs` | 263 | Pool admission: reserving a slot under the cap, retiring the least recently used child for room, and trimming the pool back to the cap. |
 | `omp/child/agents.rs` | 351 | Bounded agent conversation discovery for one native child binding. |
 | `omp/child/busy.rs` | 470 | Versioned CPU-work signal for the phone wake lock: every OMP child (including boots and one-shot scopes), native maintenance and active ASR. |
@@ -36,13 +36,13 @@ Last verified: 2026-11-18
 | `omp/child/ephemeral.rs` | 146 | Caller-scope cleanup and reap-owned admission for unregistered RPC children. |
 | `omp/child/extension.rs` | 346 | The helper extension every phone-driven omp child loads with `-e`. |
 | `omp/child/gate.rs` | 796 | Per-child admission state: the prompt lifecycle, the phase gate that linearises RPCs against retirement, and the RAII leases and waiters around it. |
-| `omp/child/monitor.rs` | 1777 | The monitor task: reading a child's stdout and stderr, dispatching events and RPC responses, and mapping omp state onto the child. |
+| `omp/child/monitor.rs` | 1859 | The monitor task: reading a child's stdout and stderr, dispatching events and RPC responses, and mapping omp state onto the child. |
 | `omp/child/plan_transition.rs` | 288 | Private extension handshake around native fresh-plan session creation. |
 | `omp/child/reap.rs` | 736 | Maintenance: the ticker that reaps idle, unwatched or oversized children and recycles them under memory pressure, and the policy that decides which. |
 | `omp/child/registered.rs` | 146 | Durable physical ownership for registered child admission, separate from routing. |
 | `omp/child/retarget.rs` | 291 | Re-keying a live idle child to another session file: retargeting it at the cap instead of evicting it, and following omp's fork to the copy. |
 | `omp/child/rpc.rs` | 488 | Sending RPC requests to a child: request ids, framing, timeouts, and waiting for the correlated response. |
-| `omp/child/spawn.rs` | 818 | Spawning and opening children: the boot handshake, registration, the command line and settings overlay, and the monitor task's start. |
+| `omp/child/spawn.rs` | 819 | Spawning and opening children: the boot handshake, registration, the command line and settings overlay, and the monitor task's start. |
 | `omp/child/teardown.rs` | 303 | Teardown helpers: killing and gracefully terminating children, submitting signals, and recording how a child exited. |
 | `omp/collab.rs` | 851 | Collab: the encrypted guest attach to a relay room (forward live frames into the WsHub) PLUS the SELF-HOSTED relay that replaces the my.omp.sh dependency. |
 | `omp/collab/fanout.rs` | 500 | Live frame mapping (host → phone WS hub): turning decrypted collab frames into hub broadcasts, link-state notices and dialog bookkeeping. |
@@ -135,7 +135,7 @@ Last verified: 2026-11-18
 | `terminal/linkscrape.rs` | 197 | Scraping a collab link out of terminal output. |
 | `types.rs` | 901 | Shared types for the omp-pulse daemon. |
 
-Totals: 126 module files, 76239 lines (test-only files excluded).
+Totals: 126 module files, 76328 lines (test-only files excluded).
 
 A module that outgrew one file is a directory: `x.rs` keeps the module's header,
 its public API and the types its parts share, and `x/<part>.rs` holds one cohesive

@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A notice with a long conversation title (such as "Reply ready") truncates the title instead of pushing the notice and its Open button past the edge of the screen.
 - A plugin card for a tool call shows once per turn; a turn that edited files no longer repeats it under the edit summary after the reply.
 - Questions from omp's form-based `ask` (omp 18.18.3 and later), which reach the phone one field at a time:
+  - Once the agent's question is answered and it carries on, the conversation stops showing as waiting for you. Answered fields used to stay open until the whole turn ended, so the session stayed under "Needs you" and an answered field kept saying it was waiting for a session update.
   - Checkbox questions show which choices are ticked, with "Done selecting" as its own button. A Nerd Font symbol omp puts in front of that label no longer shows as an empty box.
   - While the agent's question is open, the dismiss button reads "Stop turn" and asks first. omp ends the whole turn when any field is cancelled, so the old "Skip question" quietly threw away every answer given so far. The same applies to collab questions.
   - An optional text field can be left blank ("Leave blank"). Before, the only way past it was the skip that ended the turn.

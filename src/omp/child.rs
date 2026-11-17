@@ -306,6 +306,12 @@ struct Child {
     pending_ui: Mutex<HashMap<String, Value>>,
     /// Private extension marker consumed by its immediately following dialog.
     dialog_scope: Mutex<Option<String>>,
+    /// The `ask` tool call now executing, from its `tool_execution_start` to
+    /// its `tool_execution_end`. omp >= 18.18.3 asks one HTML form and, with no
+    /// form dialog over RPC, raises one `select`/`input`/`editor` per field;
+    /// dialogs raised meanwhile are stamped with this id so the ask's result
+    /// can retire every answered field, not only a `method:"ask"` dialog.
+    ask_call: Mutex<Option<String>>,
     tree_cancel: Mutex<TreeCancellation>,
     feedback: Mutex<crate::omp::ui_feedback::Feedback>,
     /// Phone-control commands sent to the child extension, awaiting its

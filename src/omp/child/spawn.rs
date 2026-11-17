@@ -617,6 +617,7 @@ impl ChildManager {
             gate: Mutex::new(ChildGate::default()),
             pending_ui: Mutex::new(HashMap::new()),
             dialog_scope: Mutex::new(None),
+            ask_call: Mutex::new(None),
             tree_cancel: Mutex::new(TreeCancellation::default()),
             feedback: Mutex::new(crate::omp::ui_feedback::Feedback::default()),
             extension_replies: Mutex::new(HashMap::new()),
