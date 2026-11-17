@@ -28,7 +28,7 @@ Last verified: 2026-11-18
 | `omp/ansi.rs` | 163 | Terminal escape stripping for text omp prints for a terminal. |
 | `omp/autotitle.rs` | 299 | Titles for conversations the daemon's own RPC children run. |
 | `omp/bridge.rs` | 1419 | Desktop event bridge: the desktop omp streams its OWN agent events here. |
-| `omp/child.rs` | 1598 | ChildManager — lazy-spawned `omp --mode rpc-ui` child processes. |
+| `omp/child.rs` | 1601 | ChildManager — lazy-spawned `omp --mode rpc-ui` child processes. |
 | `omp/child/admission.rs` | 263 | Pool admission: reserving a slot under the cap, retiring the least recently used child for room, and trimming the pool back to the cap. |
 | `omp/child/agents.rs` | 351 | Bounded agent conversation discovery for one native child binding. |
 | `omp/child/busy.rs` | 470 | Versioned CPU-work signal for the phone wake lock: every OMP child (including boots and one-shot scopes), native maintenance and active ASR. |
@@ -36,7 +36,7 @@ Last verified: 2026-11-18
 | `omp/child/ephemeral.rs` | 146 | Caller-scope cleanup and reap-owned admission for unregistered RPC children. |
 | `omp/child/extension.rs` | 346 | The helper extension every phone-driven omp child loads with `-e`. |
 | `omp/child/gate.rs` | 796 | Per-child admission state: the prompt lifecycle, the phase gate that linearises RPCs against retirement, and the RAII leases and waiters around it. |
-| `omp/child/monitor.rs` | 1859 | The monitor task: reading a child's stdout and stderr, dispatching events and RPC responses, and mapping omp state onto the child. |
+| `omp/child/monitor.rs` | 1912 | The monitor task: reading a child's stdout and stderr, dispatching events and RPC responses, and mapping omp state onto the child. |
 | `omp/child/plan_transition.rs` | 288 | Private extension handshake around native fresh-plan session creation. |
 | `omp/child/reap.rs` | 736 | Maintenance: the ticker that reaps idle, unwatched or oversized children and recycles them under memory pressure, and the policy that decides which. |
 | `omp/child/registered.rs` | 146 | Durable physical ownership for registered child admission, separate from routing. |
@@ -118,7 +118,7 @@ Last verified: 2026-11-18
 | `sessions/jsonl/page.rs` | 588 | Paged history reads: forward from a byte offset and backward from the end, bounded per call and safe against a partially written last line. |
 | `sessions/jsonl/refile.rs` | 649 | Per-project session directories and the startup refile that moves sessions stranded in the sessions root into their project's directory. |
 | `sessions/jsonl/tail.rs` | 942 | Tail reads: the last snippet, metadata, model, turn outcome and pending `ask`, found by paging backward from the end of a session file. |
-| `sessions/jsonl/tree.rs` | 1280 | The `/api/tree` branch shape: user turns, decisions and completed-answer resume targets with turn stats, in omp `/tree` order, cached by file stamp. |
+| `sessions/jsonl/tree.rs` | 1380 | The `/api/tree` branch shape: user turns, decisions and completed-answer resume targets with turn stats, in omp `/tree` order, cached by file stamp. |
 | `sessions/jsonl/turns.rs` | 409 | The user-turn index (a backward window within a byte budget) and the subagent list (a forward scan) read from a session file. |
 | `sessions/jsonl/usage.rs` | 772 | Whole-session spend and context size, folded forward from a session file. |
 | `sessions/model_usage.rs` | 740 | Read omp's model usage index without taking a SQLite lock. |
@@ -135,7 +135,7 @@ Last verified: 2026-11-18
 | `terminal/linkscrape.rs` | 197 | Scraping a collab link out of terminal output. |
 | `types.rs` | 901 | Shared types for the omp-pulse daemon. |
 
-Totals: 126 module files, 76328 lines (test-only files excluded).
+Totals: 126 module files, 76484 lines (test-only files excluded).
 
 A module that outgrew one file is a directory: `x.rs` keeps the module's header,
 its public API and the types its parts share, and `x/<part>.rs` holds one cohesive

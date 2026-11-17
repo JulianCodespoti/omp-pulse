@@ -80,6 +80,12 @@ test('a blank input may be left blank explicitly; Enter on a blank box does noth
  await f.click('extension-dialog-send');assert.equal(f.requests[0].response.value,'');
  const g=await fixture(t,{id:'i2',method:'input',title:'Note'});await g.type('extension-dialog-input','Hello');assert.equal(g.el('extension-dialog-send').textContent.trim(),'Send');
 });
+test('a secret input is masked and still sends what was typed',async t=>{
+ const f=await fixture(t,{id:'k',method:'input',title:'API key',secret:true});
+ assert.equal(f.el('extension-dialog-input').getAttribute('type'),'password');
+ await f.type('extension-dialog-input','sk-123');await f.click('extension-dialog-send');assert.equal(f.requests[0].response.value,'sk-123');
+ const g=await fixture(t,{id:'n',method:'input',title:'Name'});assert.equal(g.el('extension-dialog-input').getAttribute('type'),'text');
+});
 test('hide/reopen and session round-trip keep the draft; stale failure cannot alter another owner',async t=>{
  const request={id:'reused',method:'input',title:'Type an answer'},f=await fixture(t,request);await f.type('extension-dialog-input','Keep this');
  await f.click('sheet-close');await f.act(async()=>f.w.dispatchEvent(new f.w.Event('extension-dialog:show')));assert.equal(f.el('extension-dialog-input').value,'Keep this');

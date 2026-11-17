@@ -105,6 +105,17 @@ offers no options, text box or terminal prompt for it, only Open session. A daem
 child walks the same form field by field as ordinary `select`/`input`/`editor`
 dialogs, which the chat's dialog sheet answers by exact request ID.
 
+RPC gives no receipt for an answer, so an answered dialog stays pending (marked
+`pulseDelivery`) until something proves it settled. For a form, that proof is the
+`ask` call's `tool_execution_end`: the daemon stamps every dialog raised after the
+call's `tool_execution_start` with its call id (`pulseAskCall`) and retires every
+answered one when it ends. Re-answering from the timeline runs the ask outside a
+tool call, so the child extension wraps it in an `omp-pulse-dialog-scope` marker;
+every dialog raised between `begin` and `end` carries the scope, and `end` retires
+every answered one. Unanswered dialogs are left for omp's own `cancel`. The
+timeline reads a form decision's questions and answers from the result's
+`details.answers`, and its first question from the HTML when the result has none.
+
 ## A question must outlive the socket
 
 The desktop broadcasts each `ui-request` exactly ONCE. A phone whose socket is shut

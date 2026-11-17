@@ -304,7 +304,10 @@ struct Child {
     /// the map's iteration order, stable within a daemon run — which is all
     /// that matters, since a restart kills the child and empties this map.
     pending_ui: Mutex<HashMap<String, Value>>,
-    /// Private extension marker consumed by its immediately following dialog.
+    /// Private extension marker (`omp-pulse-dialog-scope`): every dialog raised
+    /// between its begin and end belongs to that scope, so the end settles them
+    /// all. It used to cover only the first, but a re-answered omp >= 18.18.3
+    /// form raises one dialog per field.
     dialog_scope: Mutex<Option<String>>,
     /// The `ask` tool call now executing, from its `tool_execution_start` to
     /// its `tool_execution_end`. omp >= 18.18.3 asks one HTML form and, with no

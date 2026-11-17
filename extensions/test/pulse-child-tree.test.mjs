@@ -3,13 +3,16 @@ import assert from 'node:assert/strict';
 import install from '../omp-pulse-child.ts';
 
 const questions = [{ id: 'db', question: 'Which database?', options: [{ label: 'SQLite' }, { label: 'Postgres' }] }];
+const html = '<form><fieldset><legend>Which database?</legend><label><input type="radio" name="db" value="sqlite" checked> SQLite</label></fieldset></form>';
 const originalAnswer = { content: [{ type: 'text', text: 'User selected: SQLite' }], details: { selectedOptions: ['SQLite'] } };
 
-function fixture() {
+// `form`: omp >= 18.18.3, where `ask` is one HTML form and the host exports
+// `recoverAskHtml` instead of `recoverAskQuestions`.
+function fixture({ form = false } = {}) {
   const commands = new Map();
   const entries = new Map([
     ['user', { id: 'user', type: 'message', parentId: null, message: { role: 'user', content: 'Choose storage' } }],
-    ['call', { id: 'call', type: 'message', parentId: 'user', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'q', name: 'ask', arguments: { questions } }] } }],
+    ['call', { id: 'call', type: 'message', parentId: 'user', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'q', name: 'ask', arguments: form ? { html } : { questions } }] } }],
     ['original', { id: 'original', type: 'message', parentId: 'call', message: { role: 'toolResult', toolName: 'ask', toolCallId: 'q', ...originalAnswer } }],
   ]);
   let leaf = 'original';
@@ -20,6 +23,8 @@ function fixture() {
   let nextAnswer = { content: [{ type: 'text', text: 'User selected: Postgres' }, { type: 'image', data: 'preserved', mimeType: 'image/png' }], details: { selectedOptions: ['Postgres'], note: 'Keep this native metadata' } };
   let answerDialog = async () => nextAnswer;
   let cancelTree;
+  const executed = [];
+  const statuses = [];
   const ui = {
     setStatus() {},
     select: async () => answerDialog(),
@@ -54,7 +59,7 @@ function fixture() {
     async navigateTree(id, options) {
       const target = entries.get(id);
       if (target.message?.toolName === 'ask' && options.allowAskReopen && !options.reanswerAskResult) {
-        return { cancelled: false, reopenAsk: { toolCallId: 'q', questions } };
+        return { cancelled: false, reopenAsk: form ? { toolCallId: 'q', html } : { toolCallId: 'q', questions } };
       }
       if (options.summarize) {
         if (summary?.cancelled) return summary;
@@ -71,7 +76,8 @@ function fixture() {
     },
   };
   class AskTool {
-    async execute(_id, _args, signal, _update, context) {
+    async execute(_id, args, signal, _update, context) {
+      executed.push(args);
       signal?.throwIfAborted();
       return new Promise((resolve, reject) => {
         const cancel = () => reject(new DOMException('Cancelled', 'AbortError'));
@@ -85,13 +91,13 @@ function fixture() {
     pi: {
       AgentRegistry: { global: () => ({ get: () => ({ session }) }) },
       AskTool,
-      recoverAskQuestions: (args) => args.questions,
+      ...(form ? { recoverAskHtml: (args) => args.html } : { recoverAskQuestions: (args) => args.questions }),
     },
     on() {},
     registerCommand(name, command) { commands.set(name, command); },
   });
   return {
-    entries, session,
+    entries, session, executed, statuses,
     get leaf() { return leaf; },
     get persistedLeaf() { return persistedLeaf; },
     get resumes() { return resumes; },
@@ -104,7 +110,7 @@ function fixture() {
     async request(args, name = 'pulse-goto') {
       let reply;
       const ctx = { agent: { id: 'Main' }, sessionManager: manager, isIdle: () => idle,
-        ui: { ...ui, setStatus(_key, value) { reply = JSON.parse(value); } },
+        ui: { ...ui, setStatus(key, value) { statuses.push([key, value]); reply = JSON.parse(value); } },
         navigateTree() { throw new Error('The lossy public wrapper must never navigate'); },
       };
       await commands.get(name).handler(`request ${JSON.stringify(args)}`, ctx);
@@ -146,6 +152,18 @@ test('re-answering keeps the original choice on its branch and resumes only afte
   assert.equal(f.entries.get('replacement').parentId, 'call');
   assert.equal(f.entries.get('replacement').message.content[1].type, 'image');
   assert.equal(f.entries.get(f.persistedLeaf).parentId, 'replacement');
+  assert.equal(f.resumes, 1);
+});
+
+test('a form question (omp 18.18.3+) re-answers from its html inside one dialog scope', async () => {
+  const f = fixture({ form: true });
+  const result = await f.request({ entryId: 'original', summarize: false });
+  assert.equal(result.askReanswerCommitted, true);
+  assert.deepEqual(f.executed, [{ html }]);
+  // Every field dialog the form raises sits between these markers, so the
+  // daemon retires all answered fields when the re-answer returns.
+  const phases = f.statuses.filter(([key]) => key === 'omp-pulse-dialog-scope').map(([, value]) => JSON.parse(value).phase);
+  assert.deepEqual(phases, ['begin', 'end']);
   assert.equal(f.resumes, 1);
 });
 

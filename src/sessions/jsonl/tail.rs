@@ -488,7 +488,7 @@ const FORM_FALLBACK_QUESTION: &str = "A form needs your answers";
 /// parser: the first non-empty of the first `<legend>`, the last `<p>` before
 /// the first control, the first `<label>`. The answer sheet and notification
 /// only need one readable line saying what omp is asking, not the form.
-fn form_question(html: &str, max: usize) -> String {
+pub(super) fn form_question(html: &str, max: usize) -> String {
     // ASCII-lowercasing keeps byte offsets identical to `html`, so positions
     // found in `lower` index the original text.
     let lower = html.to_ascii_lowercase();

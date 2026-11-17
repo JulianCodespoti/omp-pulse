@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - While the agent's question is open, the dismiss button reads "Stop turn" and asks first. omp ends the whole turn when any field is cancelled, so the old "Skip question" quietly threw away every answer given so far. The same applies to collab questions.
   - An optional text field can be left blank ("Leave blank"). Before, the only way past it was the skip that ended the turn.
   - The session list, notifications and the answer sheet name the form's first question instead of "Waiting for input". A form open on the computer's terminal is never typed into from the phone: the answer sheet says to answer it there. Notifications for these questions lead with the question, not the form's introduction.
+  - Answered questions are back on the Tasks tab timeline, showing the answers you gave. Every question asked since the form change was missing from it. Re-answer works again: it reported "unavailable in this omp version" because omp renamed what it uses to reopen a question, and once re-answered, those fields no longer stay open as waiting.
+- A prompt an extension marks as secret (omp 18.13.2, for example an API key) is masked on the phone while you type it.
 - Discarding or editing a message that failed to send removes its bubble too. Before, the bubble stayed and looked like a sent message until a reload, and a later identical message could appear twice. The failed message now reads "Not sent" with just the reason, offers a labelled Discard, and says so if the message changed and could not be removed. A discard is no longer lost when the app is backgrounded within its five-second undo window.
 
 ## [0.1.0] - 2026-11-12

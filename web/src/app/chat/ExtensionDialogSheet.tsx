@@ -411,6 +411,10 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
               }}
               placeholder={dialog.placeholder ?? "Type your answer"}
               aria-label={dialog.title || "Your answer"}
+              // An extension asking for a credential marks it secret; the
+              // phone showed it in plain text while it was typed.
+              type={dialog.secret ? "password" : "text"}
+              autoComplete={dialog.secret ? "off" : undefined}
               className={`h-12 ${fieldClass}`}
               enterKeyHint="send"
               data-testid="extension-dialog-input"

@@ -160,6 +160,10 @@ static TREE_CACHE: std::sync::LazyLock<Mutex<TreeCacheEntries>> =
 /// evicted first when the cap is exceeded.
 const TREE_CACHE_MAX: usize = 4;
 
+/// Cap on a form ask's first-question text read from its HTML; the same
+/// bound the session listing's pending question uses.
+const FORM_QUESTION_MAX: usize = 500;
+
 /// Build the phone's branch tree for a session file: every user turn — a
 /// `message`/user entry or a `custom_message`/collab-prompt entry with
 /// non-whitespace text — as one row, parented to its NEAREST user-turn
@@ -219,6 +223,9 @@ struct RawEntry {
 struct AskDecision {
     tool_call_id: String,
     answer: String,
+    /// Every field's question from a form ask's result (`details.answers`,
+    /// omp >= 18.18.3); `None` for the old `questions[]` ask.
+    questions: Option<String>,
 }
 
 /// OMP 18.10.4 late usage keeps its initiating parent but may capture another
@@ -363,19 +370,30 @@ fn build_tree_rows(path: &Path) -> Vec<TreeRow> {
                     {
                         continue;
                     }
-                    if let (Some(call_id), Some(questions)) = (
-                        part.get("id").and_then(Value::as_str),
-                        part.pointer("/arguments/questions")
-                            .and_then(Value::as_array),
-                    ) {
-                        let text = questions
+                    let Some(call_id) = part.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    // omp 18.18.3 replaced `questions[]` with one HTML form;
+                    // reading only `questions` dropped every later decision
+                    // from the timeline, and with it the Re-answer action.
+                    let text = if let Some(questions) = part
+                        .pointer("/arguments/questions")
+                        .and_then(Value::as_array)
+                    {
+                        questions
                             .iter()
                             .filter_map(|q| q.get("question").and_then(Value::as_str))
                             .collect::<Vec<_>>()
-                            .join("\n");
-                        if !text.trim().is_empty() {
-                            calls.insert(call_id.to_string(), text);
-                        }
+                            .join("\n")
+                    } else if let Some(html) =
+                        part.pointer("/arguments/html").and_then(Value::as_str)
+                    {
+                        super::tail::form_question(html, FORM_QUESTION_MAX)
+                    } else {
+                        continue;
+                    };
+                    if !text.trim().is_empty() {
+                        calls.insert(call_id.to_string(), text);
                     }
                 }
             }
@@ -388,6 +406,33 @@ fn build_tree_rows(path: &Path) -> Vec<TreeRow> {
             })
             .and_then(|m| {
                 let tool_call_id = m.get("toolCallId")?.as_str()?.to_string();
+                // A form ask's result text is `User answers:` + raw JSON; its
+                // `details.answers` carries each field's question and readable
+                // answer, which is what the timeline should show.
+                let fields = m
+                    .pointer("/details/answers")
+                    .and_then(Value::as_array)
+                    .filter(|answers| !answers.is_empty());
+                if let Some(fields) = fields {
+                    let pick = |key: &str| {
+                        fields
+                            .iter()
+                            .filter_map(|field| match field.get(key)? {
+                                Value::String(text) => Some(text.clone()),
+                                Value::Null => None,
+                                other => Some(other.to_string()),
+                            })
+                            .filter(|text| !text.trim().is_empty())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    };
+                    let questions = pick("question");
+                    return Some(AskDecision {
+                        tool_call_id,
+                        answer: pick("answer"),
+                        questions: (!questions.is_empty()).then_some(questions),
+                    });
+                }
                 let answer = match m.get("content")? {
                     Value::String(text) => text.clone(),
                     Value::Array(parts) => parts
@@ -401,6 +446,7 @@ fn build_tree_rows(path: &Path) -> Vec<TreeRow> {
                 Some(AskDecision {
                     tool_call_id,
                     answer,
+                    questions: None,
                 })
             });
         if text.is_some() {
@@ -484,7 +530,9 @@ fn build_tree_rows(path: &Path) -> Vec<TreeRow> {
             }
             if let Some(calls) = ask_calls.get(id) {
                 if let Some(text) = calls.get(&ask.tool_call_id) {
-                    entry.text = Some(text.clone());
+                    // The call proves the decision is on this branch; a form's
+                    // result names every field, where its HTML gave only one.
+                    entry.text = Some(ask.questions.clone().unwrap_or_else(|| text.clone()));
                     user_turns.insert(entry.id.clone(), index);
                 }
                 break;
@@ -825,6 +873,58 @@ mod tests {
         assert_eq!(rows[1].stats, TurnStats::default());
         assert_eq!(rows[2].stats, TurnStats::default());
         assert_eq!(rows.iter().map(|r| r.stats.output_tokens).sum::<u64>(), 11);
+    }
+
+    #[test]
+    fn form_ask_decisions_stay_on_the_timeline_with_readable_answers() {
+        // omp >= 18.18.3: one HTML form; the result text is raw JSON, while
+        // `details.answers` names each field's question and answer.
+        let call = serde_json::json!({
+            "type":"message", "id":"call", "parentId":"u",
+            "message":{"role":"assistant","content":[{"type":"toolCall","id":"f","name":"ask",
+                "arguments":{"html":"<form><fieldset><legend>Which database?</legend><label><input type=\"radio\" name=\"db\" value=\"pg\" checked> Postgres</label></fieldset><label>Notes <input name=\"notes\"></label></form>"}}]}
+        })
+        .to_string();
+        let answered = serde_json::json!({
+            "type":"message", "id":"answer", "parentId":"call",
+            "message":{"role":"toolResult","toolName":"ask","toolCallId":"f",
+                "content":[{"type":"text","text":"User answers:\n{\n  \"db\": \"pg\",\n  \"notes\": \"\"\n}"}],
+                "details":{"answers":[
+                    {"name":"db","question":"Which database?","answer":"Postgres"},
+                    {"name":"notes","question":"Notes","answer":""}
+                ]}}
+        })
+        .to_string();
+        let bare = serde_json::json!({
+            "type":"message", "id":"bare", "parentId":"call",
+            "message":{"role":"toolResult","toolName":"ask","toolCallId":"f",
+                "content":[{"type":"text","text":"Ask input was cancelled"}]}
+        })
+        .to_string();
+        let (_, rows) = tree_fixture(
+            "ask-form",
+            &[
+                &header_line("s"),
+                &user_line("u", "s", "Set up storage"),
+                &call,
+                &bare,
+                &answered,
+            ],
+        );
+        let answer = rows
+            .iter()
+            .find(|r| r.id == "answer")
+            .expect("form decision row");
+        assert_eq!(answer.kind, "ask");
+        assert_eq!(answer.text, "Which database?\nNotes");
+        assert_eq!(answer.answer.as_deref(), Some("Postgres"));
+        // Without `details.answers` the form's own first question still names it.
+        let bare = rows
+            .iter()
+            .find(|r| r.id == "bare")
+            .expect("form decision without details");
+        assert_eq!(bare.text, "Which database?");
+        assert_eq!(bare.answer.as_deref(), Some("Ask input was cancelled"));
     }
 
     #[test]

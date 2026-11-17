@@ -73,6 +73,8 @@ export interface ExtensionDialog {
   /** Select options, labels exactly as omp expects them back. */
   options?: ExtensionDialogOption[];
   placeholder?: string;
+  /** `ctx.ui.input({ secret: true })` (omp 18.13.2): mask what is typed. */
+  secret?: boolean;
   /** omp's native select presentation (see selectMetadata); never inferred from labels. */
   selectionMarker?: "radio" | "checkbox";
   /** Option indices currently ticked (checkbox selects). */
@@ -190,7 +192,7 @@ export function parseExtensionDialog(raw: unknown, now: number): ExtensionDialog
     case "confirm":
       return { ...base, method, message: text(obj.message)?.trim() || undefined };
     case "input":
-      return { ...base, method, placeholder: text(obj.placeholder) || undefined };
+      return { ...base, method, placeholder: text(obj.placeholder) || undefined, ...(obj.secret === true ? { secret: true } : {}) };
     case "editor":
       return { ...base, method, prefill: text(obj.prefill) ?? "" };
     case "ask": {
