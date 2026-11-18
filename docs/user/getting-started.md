@@ -75,8 +75,17 @@ Pulse prints a QR code and a link.
 - **Any phone's browser, including iPhone:** open the link or scan the QR code, finish pairing, then add Pulse to your Home Screen. On iPhone, use Safari and choose **Add to Home Screen**.
 
 Each code works once and expires after five minutes; run `omp-pulse pair` again
-for a fresh one. To pair a watch-only device that can follow along but not send,
-run `omp-pulse pair --role read`. More on roles:
+for a fresh one. The code pairs your phone as an **admin**. Every paired device
+has a role:
+
+| Role | What it can do |
+| --- | --- |
+| `admin` (default) | Everything: send messages, run commands, add model providers, pair more devices and remove access. |
+| `control` | Send messages and run commands on the computer, but not add model providers or manage devices. |
+| `read` | Read conversations and follow live updates, but not send, stop or change anything. |
+
+To pair someone else's device, or a spare one, with less access, run
+`omp-pulse pair --role control` or `omp-pulse pair --role read`. More on roles:
 [Pairing roles](configuration.md#pairing-roles).
 
 ## 6. Start a conversation

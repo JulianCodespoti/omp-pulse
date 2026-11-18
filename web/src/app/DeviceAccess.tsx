@@ -9,6 +9,7 @@ import { copyText } from "@/platform/clipboard";
 import { DaemonApi } from "@/runtime/rpc-client";
 import { startVisibleInterval } from "@/runtime/visible-interval";
 import { showToast } from "./Notices";
+import { BecomeAdmin, ROLE_DETAIL, ROLE_LABEL, type DeviceRole } from "./device-roles";
 import { pairingLink } from "./pairing-link";
 import { QrCode } from "./QrCode";
 import { Notice } from "./ui/Notice";
@@ -18,7 +19,6 @@ import { Row, RowGroup, RowSkeleton } from "./ui/Row";
 import { Segmented } from "./ui/Segmented";
 import { ConfirmSheet } from "./ui/Sheet";
 
-export type DeviceRole = "admin" | "control" | "read";
 export interface PairedDevice {
   id: string;
   name: string;
@@ -28,17 +28,7 @@ export interface PairedDevice {
   revokedAt?: number | null;
 }
 
-// One role vocabulary, shared by the device rows and the Access choice.
-const ROLE_LABEL: Record<DeviceRole, string> = {
-  admin: "Admin",
-  control: "Control",
-  read: "Read only",
-};
-const ROLE_DETAIL: Record<DeviceRole, string> = {
-  admin: "Can read and control sessions, pair more devices and remove access.",
-  control: "Can read and control sessions, but can\u2019t manage other devices.",
-  read: "Can read conversations and follow live updates, but can\u2019t send, stop or change anything.",
-};
+// The Access choice offers the shared vocabulary (device-roles.tsx).
 const ROLE_OPTIONS = (["read", "control", "admin"] as const).map((value) => ({
   value,
   label: ROLE_LABEL[value],
@@ -184,9 +174,13 @@ export function DeviceAccess({ onPairAnother }: { onPairAnother: () => void }): 
         aria-labelledby="device-access-heading"
         data-testid="device-access"
         footer={
-          current && !isAdmin
-            ? ROLE_DETAIL[current.role]
-            : "A removed device needs a new code to connect again."
+          current && !isAdmin ? (
+            <>
+              {ROLE_DETAIL[current.role]} <BecomeAdmin />
+            </>
+          ) : (
+            "A removed device needs a new code to connect again."
+          )
         }
       >
         {loading && !current && !error ? (

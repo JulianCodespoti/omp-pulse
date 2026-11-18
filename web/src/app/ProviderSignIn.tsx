@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { parseProviders, type OmpLocalBridge } from "../platform/local-mode";
 import type { DaemonApi, ProviderLoginState } from "../runtime/rpc-client";
 import { startVisibleInterval } from "../runtime/visible-interval";
+import { BecomeAdmin } from "./device-roles";
 import { CopyButton } from "./parts/CopyButton";
 import { providerLabel } from "./sessions/ModelPicker";
 import { EmptyState } from "./ui/EmptyState";
@@ -159,6 +160,8 @@ function getSharedLogin(): Login | null {
 }
 
 const NO_IDS: readonly string[] = [];
+/** What a device that may not manage providers lists: nothing (see the list effect). */
+const NO_LIST: { providers: SignInProvider[]; error: string | null } = { providers: [], error: null };
 
 /**
  * Signs in to a model provider through omp's own login flow: signed-in
@@ -205,6 +208,14 @@ export function ProviderSignIn({
 
   useEffect(() => {
     if (!active) return;
+    // A computer answers its provider list to an admin device only, so a phone
+    // that may not manage got a 403 shown as a bare "This device doesn't have
+    // access" with Try again, and never the reason or the fix. Without the
+    // list it still shows which providers work, from the model catalogue.
+    if (!canManage) {
+      setListed(NO_LIST);
+      return;
+    }
     let cancelled = false;
     void transport.list().then((result) => {
       if (!cancelled) setListed(result);
@@ -212,12 +223,12 @@ export function ProviderSignIn({
     return () => {
       cancelled = true;
     };
-  }, [transport, active, attempt]);
+  }, [transport, active, attempt, canManage]);
 
   // A reloaded page forgets the module state while the login runs on; adopt it
   // once so the page still shows that login instead of "Add a provider".
   useEffect(() => {
-    if (!active || getSharedLogin()) return;
+    if (!active || !canManage || getSharedLogin()) return;
     let cancelled = false;
     void transport.state().then(
       (state) => {
@@ -228,7 +239,7 @@ export function ProviderSignIn({
     return () => {
       cancelled = true;
     };
-  }, [transport, active]);
+  }, [transport, active, canManage]);
 
   // Only a finished login is stale once the page is left; a running one is
   // exactly what the next visit must find again.
@@ -483,7 +494,15 @@ export function ProviderSignIn({
             <EmptyState
               icon={<KeyRoundIcon />}
               title="No providers yet"
-              description={canManage ? "Sign in to a provider to use its models." : "Only an admin device can add providers."}
+              description={
+                canManage ? (
+                  "Sign in to a provider to use its models."
+                ) : (
+                  <>
+                    Only an admin device can add providers. <BecomeAdmin />
+                  </>
+                )
+              }
               action={canManage ? { label: "Add a provider", onClick: () => setAdding(true) } : undefined}
               testId="provider-empty"
             />
@@ -492,7 +511,7 @@ export function ProviderSignIn({
             anySigned ? addRow : null
           ) : anySigned ? (
             <p className="px-1 text-meta text-muted-foreground" data-testid="provider-read-only">
-              Only an admin device can add providers.
+              Only an admin device can add providers. <BecomeAdmin />
             </p>
           ) : null}
         </>
