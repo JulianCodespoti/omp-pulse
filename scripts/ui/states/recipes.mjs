@@ -158,7 +158,7 @@ const cachedLinkFailure = {
 const HASH = (c) => c.repeat(64);
 const HOST_USAGE = {
   id: "host-usage", name: "Host usage", version: "0.1.0", description: "Load and memory of the computer running the daemon",
-  status: "enabled", hash: HASH("a"), slots: ["drawer", "composer.status", "page"], linked: true,
+  status: "enabled", hash: HASH("a"), slots: ["drawer", "composer.status", "page", "workspace"], linked: true,
   sources: [
     { id: "load", command: ["cat", "/proc/loadavg"], intervalS: 10, timeoutS: 5 },
     { id: "mem", command: ["cat", "/proc/meminfo"], intervalS: 10, timeoutS: 5 },
@@ -301,6 +301,23 @@ pulse.slot("composer.actions", async () =>
   ], { actions: { click: "pick" } }));
 pulse.on("action", (event) => {
   if (event.act === "pick" && event.item && TEXT[event.item]) pulse.composer.insert(TEXT[event.item]);
+});
+`;
+// A second workspace plugin, so the Plugins page needs its picker; it also shows what ctx.session carries there.
+const SESSION_FACTS = info({
+  id: "session-facts", name: "Session facts", version: "0.1.0", description: "The open conversation's model and folder", hash: HASH("5"),
+  slots: ["workspace"], permissions: ["session.read"],
+});
+const SESSION_FACTS_SCRIPT = `
+pulse.slot("workspace", async (ctx) => {
+  const s = ctx && ctx.session;
+  if (!s) return pulse.ui.empty("No conversation open");
+  return pulse.ui.card("This conversation", [pulse.ui.kv([
+    { key: "title", value: s.title || "Untitled" },
+    { key: "model", value: s.model || "unknown" },
+    { key: "folder", value: s.cwd || "none" },
+    { key: "status", value: s.status, tone: s.status === "needs-you" ? "warning" : s.status === "working" ? "accent" : "neutral" },
+  ])]);
 });
 `;
 const BASH_CARD = info({ id: "bash-card", name: "Bash card", version: "0.1.0", description: "Draws bash calls as a summary card", hash: HASH("2"), slots: ["transcript.tool"], tools: ["bash"] });
@@ -1202,6 +1219,30 @@ export const RECIPES = [
       await ui.el("[data-testid='plugin-page']");
       await ui.text("Sandbox check");
       await ui.text("blocked");
+    } },
+  { id: "workspace-plugin", group: "Plugins", title: "Workspace: one plugin's tab (host-usage)", setup: (env) => ({ hash: env.chatHash(MAIN), enforceCsp: true }),
+    note: "A sixth dock cell, Plugins, after Terminal: six equal cells, no label cut, the pill under Plugins. The drawer title names the plugin (Host usage); the page is its Host card and a Refresh button, with no picker row",
+    run: async (ui) => {
+      await ui.chat();
+      await serveHostUsagePlugin(ui, [HOST_USAGE]);
+      await nudgeUntil(ui, "[data-testid='workspace-tabs'] [data-value='plugins']");
+      await openWorkspaceTab(ui, "plugins");
+      await ui.el("[data-testid='workspace-tab-plugins'] [data-testid='plugin-view'][data-plugin='host-usage']");
+      await ui.text("memory used");
+    } },
+  { id: "workspace-plugins-picker", group: "Plugins", title: "Workspace: two plugins share the Plugins tab", setup: (env) => ({ hash: env.chatHash(MAIN), enforceCsp: true }),
+    note: "A row of the two plugins' names under the drawer title (Plugins), Session facts selected in violet; its card names this conversation's title, model and folder",
+    run: async (ui) => {
+      await ui.chat();
+      await servePlugins(ui, {
+        plugins: [HOST_USAGE, SESSION_FACTS],
+        scripts: { "host-usage": exampleScript("host-usage"), "session-facts": SESSION_FACTS_SCRIPT },
+        readings: Object.fromEntries(Object.entries(HOST_READINGS).map(([source, text]) => [`host-usage/${source}`, text])),
+      });
+      await nudgeUntil(ui, "[data-testid='workspace-tabs'] [data-value='plugins']");
+      await openWorkspaceTab(ui, "plugins");
+      await ui.click("[data-testid='plugins-tab-choice'][data-plugin='session-facts']");
+      await ui.text("This conversation");
     } },
 
   // ── Plugins: slice 2 surfaces ────────────────────────────────────────────
