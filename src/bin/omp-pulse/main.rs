@@ -319,6 +319,11 @@ fn request_pairing_code(
         .ok_or_else(|| "the daemon returned no enrollment code".to_string())
 }
 
+/// Role of the code `setup` prints. The person running setup pairs their own
+/// phone, and a `control` default left people unable to add a model provider
+/// or remove a lost device (both admin-only) without ever having heard of roles.
+const PAIRING_ROLE: DeviceRole = DeviceRole::Admin;
+
 fn cmd_setup(args: cli::SetupArgs) -> Result<(), String> {
     init_tracing();
     let paths = paths::Paths::resolve()?;
@@ -356,14 +361,14 @@ fn cmd_setup(args: cli::SetupArgs) -> Result<(), String> {
                 &runtime.bind,
                 runtime.port,
                 &owner_token,
-                DeviceRole::Control,
+                PAIRING_ROLE,
                 None,
             )?;
             (runtime.bind, runtime.port, code)
         }
         None => {
             // First-time setup happens before serve opens the registry.
-            let code = devices.issue_pairing_code(DeviceRole::Control, None)?.code;
+            let code = devices.issue_pairing_code(PAIRING_ROLE, None)?.code;
             (cfg.host.clone(), cfg.port, code)
         }
     };
@@ -412,6 +417,7 @@ fn cmd_setup(args: cli::SetupArgs) -> Result<(), String> {
     let plan =
         cli::plan_pairing_with_owner(&pairing_host, pairing_port, &owner_token, &pairing_code);
     cli::print_pairing(&plan);
+    cli::print_pairing_role(PAIRING_ROLE);
     println!("\nTo run it as a background service:");
     println!(
         "  omp-pulse service install --bind {} --port {}",
@@ -458,12 +464,9 @@ fn cmd_pair(args: cli::PairArgs) -> Result<(), String> {
     let pairing_code = request_pairing_code(&host, port, &owner_token, role, args.name.as_deref())?;
     // The owner token stays in authenticated requests to the local daemon;
     // the printed URL carries only the one-use enrollment code.
-    cli::print_pairing(&cli::plan_pairing_with_owner(
-        &host,
-        port,
-        &owner_token,
-        &pairing_code,
-    ));
+    let plan = cli::plan_pairing_with_owner(&host, port, &owner_token, &pairing_code);
+    cli::print_pairing(&plan);
+    cli::print_pairing_role(role);
     Ok(())
 }
 
@@ -504,7 +507,7 @@ fn cmd_migrate_owner_token() -> Result<(), String> {
     write_token_file(&cfg.paths.token_file, &replacement)?;
     println!(
         "Desktop owner credential rotated. Start the daemon, then run \
-         `omp-pulse pair --role admin` to issue a fresh administrator enrollment code."
+         `omp-pulse pair` to issue a fresh administrator enrollment code."
     );
     Ok(())
 }

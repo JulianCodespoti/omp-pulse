@@ -148,8 +148,8 @@ desktop administration. Perform the explicit cutover when ready to re-pair:
    `omp-pulse migrate-owner-token` refuses to rotate while an override remains.
 3. Run `omp-pulse migrate-owner-token`. It replaces the desktop owner token
    on disk and refuses to run while the daemon is active.
-4. Start the daemon, then run `omp-pulse pair --role admin` for a trusted
-   administrative device. Pair other devices with the least privilege needed.
+4. Start the daemon, then run `omp-pulse pair` (admin by default) for your own
+   device. Pair other devices with `--role control` or `--role read` as needed.
 5. Forget the old pairing on each phone and redeem a fresh enrollment code.
    Old shared credentials are rejected by the restarted daemon.
 

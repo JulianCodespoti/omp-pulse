@@ -35,6 +35,33 @@ pub enum DeviceRole {
 }
 
 impl DeviceRole {
+    /// The role with its indefinite article ("an admin", "a read-only"), for
+    /// sentences such as "This code pairs an admin device".
+    pub fn article_name(self) -> &'static str {
+        match self {
+            Self::Admin => "an admin",
+            Self::Control => "a control",
+            Self::Read => "a read-only",
+        }
+    }
+
+    /// One-sentence description of what the role can do, printed beside every
+    /// pairing code. Keep it in step with the role table in
+    /// docs/user/configuration.md.
+    pub fn summary(self) -> &'static str {
+        match self {
+            Self::Admin => {
+                "it can do everything, including adding model providers and managing paired devices."
+            }
+            Self::Control => {
+                "it can send messages and run commands on the computer, but can't add model providers or manage devices."
+            }
+            Self::Read => {
+                "it can read conversations and follow live updates, but can't send, stop or change anything."
+            }
+        }
+    }
+
     pub fn can_read(self) -> bool {
         true
     }

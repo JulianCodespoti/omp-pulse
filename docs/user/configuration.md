@@ -15,7 +15,7 @@ indexed in [docs/README.md](../README.md).
 |---|---|
 | `omp-pulse serve` | run the daemon in the foreground |
 | `omp-pulse setup [--bind HOST] [--port PORT]` | first-run configuration: writes `config.toml`, creates the desktop owner credential, installs the desktop-control extension, prints a one-use enrollment QR |
-| `omp-pulse pair [--role control\|read\|admin] [--name NAME]` | ask the running daemon for a five-minute, single-use enrollment QR (default role `control`) |
+| `omp-pulse pair [--role admin\|control\|read] [--name NAME]` | ask the running daemon for a five-minute, single-use enrollment QR (default role `admin`) |
 | `omp-pulse doctor` | walk the live-sync chain and print one line per check, with a remedy on every failure |
 | `omp-pulse service install [--bind HOST] [--port PORT]` / `status` / `uninstall` | run as a background service: systemd user unit on Linux, launchd on macOS, Task Scheduler on Windows |
 | `omp-pulse push-test [--session PATH]` | send a real notification to every subscribed device |
@@ -29,11 +29,28 @@ Flags on `serve`: `--bind HOST`, `--port PORT`, `--token TOKEN`,
 
 ### Pairing roles
 
-Each phone or browser gets its own credential. `read` can watch sessions,
-`control` can also send prompts and run actions, and `admin` can also manage
-devices. Revoke a lost device from Settings on an admin device. The owner
-credential in `<state_dir>/token` stays on the desktop and is never put in a
-pairing link.
+Each phone or browser gets its own credential with one of three roles.
+`omp-pulse setup` and `omp-pulse pair` issue `admin` unless you pass `--role`,
+and both print the role the code grants.
+
+| Role | Can | Can't |
+| --- | --- | --- |
+| `admin` (default) | Everything: send messages, run commands, add model providers, pair more devices and remove access. | Nothing is withheld. |
+| `control` | Send messages and run commands on the computer. | Add model providers or manage devices (both admin-only). |
+| `read` | Read conversations and follow live updates. | Send, stop or change anything. |
+
+`control` is a guardrail, not a boundary: a control device can run any command
+on the computer, so it does not stop a device doing what an admin can. Pick it
+for a device you trust with your sessions but want kept out of providers and
+device settings by default. `read` is the role that truly limits a device.
+
+An existing device's role cannot be changed. To become an admin, run
+`omp-pulse pair` on the computer and pair the phone again with the new code,
+then remove the old device from an admin device: Settings, tap your computer,
+then **Remove** beside it under Devices. A lost device is revoked the same way.
+A phone that is not an admin says so, and how to fix it, on its Model providers
+and Computer screens. The owner credential in `<state_dir>/token` stays on the
+desktop and is never put in a pairing link.
 
 ### Desktop model and reasoning controls
 

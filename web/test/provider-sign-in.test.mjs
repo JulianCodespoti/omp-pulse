@@ -150,11 +150,15 @@ test('a failed sign-in says so inline with Try again and its output', async (t) 
   assert.equal(JSON.stringify(x.f.net.log), '["start:openai-codex","start:openai-codex"]');
 });
 
-test('a read-only device sees the list and one line of explanation, no way to add', async (t) => {
-  const x = await fixture(t, { canManage: false });
+// A computer refuses its provider list to a non-admin (403), so asking only
+// produced a bare access error; the working providers come from the models.
+test('a device that may not manage never asks for the list: providers serving models, and how to become an admin', async (t) => {
+  const x = await fixture(t, { canManage: false, catalogueProviders: ['anthropic'] });
   await x.until(() => x.q('[data-testid="provider-signed-in-row"]'));
+  assert.equal(x.f.net.lists, 0);
   assert.equal(x.q('[data-testid="provider-add"]'), null);
   assert.equal(x.text().split('Only an admin device can add providers.').length - 1, 1);
+  assert.equal(x.text().includes('omp-pulse pair'), true);
 });
 
 test('providers serving models count as signed in when the credential store lists none', async (t) => {

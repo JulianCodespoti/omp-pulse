@@ -115,8 +115,9 @@ omp-pulse.exe pair
 
 Scan the QR code or open the printed URL and submit the enrollment form.
 The code expires after five minutes and can be used once. The phone receives
-an independent credential; use `pair --role read` for read-only access or
-`pair --role admin` for device administration. Keep enrollment links private.
+an independent credential, an admin by default (it can add model providers and
+manage devices); use `pair --role control` or `pair --role read` for a device
+with less access. Keep enrollment links private.
 
 ## 5. Start it automatically
 
