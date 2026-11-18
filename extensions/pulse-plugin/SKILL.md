@@ -1,6 +1,6 @@
 ---
 name: pulse-plugin
-description: Build, check and install an omp-pulse plugin, a small sandboxed script that draws chips, rows, cards or a page in the omp-pulse phone app. Use when the user asks for a Pulse plugin, phone widget, chip, drawer panel, menu item, page or transcript card for omp-pulse, or wants to show host command output or run a host action from the phone.
+description: Build, check and install an omp-pulse plugin, a small sandboxed script that draws chips, rows, cards, a page or a tab in a chat's workspace in the omp-pulse phone app. Use when the user asks for a Pulse plugin, phone widget, chip, drawer panel, menu item, page, workspace tab or transcript card for omp-pulse, or wants to show host command output or run a host action from the phone.
 # omp-pulse managed skill: omp-pulse rewrites this folder; local edits are lost
 ---
 
@@ -35,10 +35,11 @@ it on; you cannot and must not do that for them.
 
 `composer.status` chip(s) beside the composer; `composer.actions` rows in the
 plus sheet; `drawer` a few chips, text, progress bars; `page` a full page opened
-from a chip or button; `session.row` chips on a conversation's row in Chats;
-`session.menu` rows in a conversation's actions menu; `transcript.tool` a card
-replacing a claimed tool call's body (needs `tools`); `transcript.message` the
-same for custom messages (needs `messages`).
+from a chip or button; `workspace` a page in the chat's workspace drawer, shared
+as one Plugins tab after Terminal; `session.row` chips on a conversation's row
+in Chats; `session.menu` rows in a conversation's actions menu;
+`transcript.tool` a card replacing a claimed tool call's body (needs `tools`);
+`transcript.message` the same for custom messages (needs `messages`).
 
 ## Workflow
 

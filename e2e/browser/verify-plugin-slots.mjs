@@ -153,7 +153,7 @@ writeFileSync(
     'version = "0.0.1"',
     'description = "Exercises every slot for the browser suite"',
     'client = "client.js"',
-    'slots = ["session.row", "session.menu", "composer.actions", "transcript.tool", "transcript.message", "page"]',
+    'slots = ["session.row", "session.menu", "composer.actions", "transcript.tool", "transcript.message", "page", "workspace"]',
     'permissions = ["session.compose"]',
     'tools = ["probe_tool"]',
     'messages = ["probe:card"]',
@@ -233,6 +233,12 @@ pulse.slot("page", () =>
     ]),
   ]));
 
+pulse.slot("workspace", () =>
+  pulse.ui.col([
+    pulse.ui.text("probe-workspace " + prefix()),
+    pulse.ui.button("Tap", "ws-tap"),
+  ]));
+
 pulse.on("action", async (event) => {
   if (event.slot === "session.menu") {
     const r = await pulse.host.run("echo", event.item);
@@ -244,6 +250,8 @@ pulse.on("action", async (event) => {
       const r = await pulse.session.prompt("should not send");
       pulse.toast("probe-prompt ok=" + r.ok + (r.ok ? "" : " " + r.error));
     }
+  } else if (event.slot === "workspace") {
+    pulse.toast("probe-workspace-tap");
   }
 });
 `,
@@ -630,6 +638,26 @@ try {
     );
   } catch (e) {
     check("composer.actions insert and refused prompt", false, String(e.message ?? e));
+  }
+
+  // 9. workspace: the drawer's Plugins tab, after Terminal, draws the plugin's view; a tap reaches it.
+  try {
+    if (!chatOpen) throw new Error("conversation not open");
+    const tab = "[data-testid='workspace-tabs'] [data-value='plugins']";
+    await page.waitForSelector(tab, { timeout: WAIT });
+    const order = await page.$$eval("[data-testid='workspace-tabs'] [role='tab']", (nodes) => nodes.map((n) => n.getAttribute("data-value")).join(","));
+    check("the workspace dock ends with a Plugins tab", order === "agents,tasks,changes,files,terminal,plugins", order);
+    await click(tab);
+    const view = "[data-testid='workspace-tab-plugins'] [data-testid='plugin-view'][data-plugin='probe']";
+    await page.waitForFunction((sel) => (document.querySelector(sel)?.textContent ?? "").includes("probe-workspace zed"), { timeout: SLOW }, view);
+    const title = ((await text("[data-testid='workspace-title']")) ?? "").trim();
+    check("the Plugins tab draws the plugin's view under the plugin's name", title === "Probe", title);
+    await tap(`${view} [data-testid='plugin-button']`);
+    await bodyHas("probe-workspace-tap", WAIT);
+    check("a tap on the workspace view reaches the plugin", true);
+    await click("[data-testid='workspace-close']");
+  } catch (e) {
+    check("workspace: the Plugins tab", false, String(e.message ?? e));
   }
 
   // The plugin must not have been able to do anything the manifest did not declare.

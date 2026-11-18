@@ -184,9 +184,9 @@ pulse.slot("composer.status", async () => {
   return load ? loadChip(load) : null;
 });
 
-// The full page: host facts, then the sandbox check.
-pulse.slot("page", async () => {
-  const [host, load, mem, checks] = await Promise.all([readHost(), readLoad(), readMemory(), probes()]);
+// The Host card, shared by the page and the workspace tab.
+async function hostCard() {
+  const [host, load, mem] = await Promise.all([readHost(), readLoad(), readMemory()]);
   const unavailable = "unavailable";
   const gib = (n) => n.toFixed(1) + " GiB";
   const hostItems = [
@@ -203,12 +203,22 @@ pulse.slot("page", async () => {
     const percent = Math.round(mem.used * 100);
     hostBody.push(pulse.ui.progress(mem.used, "memory " + percent + "%", { tone: memTone(percent) }));
   }
+  return pulse.ui.card("Host", hostBody);
+}
+
+// The full page: host facts, then the sandbox check.
+pulse.slot("page", async () => {
+  const [card, checks] = await Promise.all([hostCard(), probes()]);
   return pulse.ui.col([
-    pulse.ui.card("Host", hostBody),
+    card,
     pulse.ui.card("Sandbox check", [pulse.ui.kv(checks)]),
     pulse.ui.button("Refresh", "refresh"),
   ]);
 });
+
+// The workspace tab sits next to the Terminal and shows the computer the
+// conversation runs on, so it is just the Host card; no sandbox check here.
+pulse.slot("workspace", async () => pulse.ui.col([await hostCard(), pulse.ui.button("Refresh", "refresh")]));
 
 // ---- Actions ---------------------------------------------------------------
 // A tap on a chip or button arrives here as the name given in `actions.click`.

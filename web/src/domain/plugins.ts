@@ -9,6 +9,7 @@ export const PLUGIN_SLOTS = [
   "composer.actions",
   "drawer",
   "page",
+  "workspace",
   "session.row",
   "session.menu",
   "transcript.tool",
@@ -160,6 +161,8 @@ const SLOT_RULES: Record<PluginSlotId, SlotRule> = {
   "composer.actions": { kinds: ["list"], maxNodes: 1, maxDepth: 1, menuItems: 8 },
   drawer: { kinds: ["chip", "text", "progress", "row", "col"], maxNodes: 12, maxDepth: 3 },
   page: { kinds: ALL_KINDS, maxNodes: 300, maxDepth: 8 },
+  // A page of its own in the chat's workspace drawer: as roomy as `page`.
+  workspace: { kinds: ALL_KINDS, maxNodes: 300, maxDepth: 8 },
   "session.row": { kinds: ["chip", "row"], maxNodes: 3, maxDepth: 2, chipsOnly: true },
   "session.menu": { kinds: ["list"], maxNodes: 1, maxDepth: 1, menuItems: 6 },
   "transcript.tool": { kinds: ALL_KINDS, maxNodes: 120, maxDepth: 6 },
