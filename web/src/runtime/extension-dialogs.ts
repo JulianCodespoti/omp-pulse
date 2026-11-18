@@ -7,6 +7,44 @@
 // answered (or omp cancelled) never comes back, even when a replay raced the
 // answer. Pure and import-free so a plain Node test can exercise it.
 
+/** omp's select-dialog presentation hints (RPC `select` and collab `select` frames). */
+export interface SelectMetadata {
+  selectionMarker?: "radio" | "checkbox";
+  checkedIndices?: number[];
+  /** Options before this index toggle; later ones are actions (e.g. "Done selecting"). */
+  markableCount?: number;
+  helpText?: string;
+}
+
+/** Native select metadata, never inferred from option labels. */
+export function selectMetadata(request: Record<string, unknown>, optionCount: number): SelectMetadata {
+  const marker = request.selectionMarker;
+  if (marker !== "radio" && marker !== "checkbox") return {};
+  const count = request.markableCount === undefined ? optionCount : request.markableCount;
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0 || count > optionCount) return {};
+  const checked = request.checkedIndices;
+  if (checked !== undefined && (!Array.isArray(checked) || !checked.every(index => typeof index === "number" && Number.isSafeInteger(index) && index >= 0 && index < count))) return {};
+  return {
+    selectionMarker: marker,
+    checkedIndices: Array.isArray(checked) ? [...new Set(checked as number[])] : [],
+    markableCount: count,
+    ...(typeof request.helpText === "string" ? { helpText: request.helpText } : {}),
+  };
+}
+
+const LEADING_ICON_GLYPH = /^[\uE000-\uF8FF\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]\s*/u;
+
+/**
+ * Display-only: omp prefixes some labels with a theme icon (its "Done selecting"
+ * action carries the Nerd Font checkmark U+F00C), which has no glyph in a phone
+ * font and renders as tofu. The value sent back must stay the exact original
+ * label, which omp matches against the options it offered.
+ */
+export function displayOptionLabel(label: string): string {
+  const stripped = label.replace(LEADING_ICON_GLYPH, "");
+  return stripped || label;
+}
+
 export type ExtensionDialogMethod = "select" | "confirm" | "input" | "editor" | "ask";
 
 export interface ExtensionDialogOption {
@@ -35,6 +73,14 @@ export interface ExtensionDialog {
   /** Select options, labels exactly as omp expects them back. */
   options?: ExtensionDialogOption[];
   placeholder?: string;
+  /** `ctx.ui.input({ secret: true })` (omp 18.13.2): mask what is typed. */
+  secret?: boolean;
+  /** omp's native select presentation (see selectMetadata); never inferred from labels. */
+  selectionMarker?: "radio" | "checkbox";
+  /** Option indices currently ticked (checkbox selects). */
+  checkedIndices?: number[];
+  /** Options before this index toggle; later ones are actions such as "Done selecting". */
+  markableCount?: number;
   prefill?: string;
   questions?: ExtensionAskQuestion[];
   /** Daemon transport evidence only; OMP does not acknowledge callback acceptance. */
@@ -136,12 +182,17 @@ export function parseExtensionDialog(raw: unknown, now: number): ExtensionDialog
   switch (method) {
     case "select": {
       const options = parseOptions(obj.options, obj.optionDetails);
-      return options.length ? { ...base, method, options } : null;
+      if (!options.length) return null;
+      const { selectionMarker, checkedIndices, markableCount } = selectMetadata(obj, options.length);
+      return {
+        ...base, method, options,
+        ...(selectionMarker ? { selectionMarker, checkedIndices, markableCount } : {}),
+      };
     }
     case "confirm":
       return { ...base, method, message: text(obj.message)?.trim() || undefined };
     case "input":
-      return { ...base, method, placeholder: text(obj.placeholder) || undefined };
+      return { ...base, method, placeholder: text(obj.placeholder) || undefined, ...(obj.secret === true ? { secret: true } : {}) };
     case "editor":
       return { ...base, method, prefill: text(obj.prefill) ?? "" };
     case "ask": {

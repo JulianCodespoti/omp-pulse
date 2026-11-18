@@ -28,7 +28,7 @@ Last verified: 2026-11-18
 | `omp/ansi.rs` | 163 | Terminal escape stripping for text omp prints for a terminal. |
 | `omp/autotitle.rs` | 299 | Titles for conversations the daemon's own RPC children run. |
 | `omp/bridge.rs` | 1419 | Desktop event bridge: the desktop omp streams its OWN agent events here. |
-| `omp/child.rs` | 1592 | ChildManager — lazy-spawned `omp --mode rpc-ui` child processes. |
+| `omp/child.rs` | 1608 | ChildManager — lazy-spawned `omp --mode rpc-ui` child processes. |
 | `omp/child/admission.rs` | 263 | Pool admission: reserving a slot under the cap, retiring the least recently used child for room, and trimming the pool back to the cap. |
 | `omp/child/agents.rs` | 351 | Bounded agent conversation discovery for one native child binding. |
 | `omp/child/busy.rs` | 470 | Versioned CPU-work signal for the phone wake lock: every OMP child (including boots and one-shot scopes), native maintenance and active ASR. |
@@ -36,13 +36,13 @@ Last verified: 2026-11-18
 | `omp/child/ephemeral.rs` | 146 | Caller-scope cleanup and reap-owned admission for unregistered RPC children. |
 | `omp/child/extension.rs` | 346 | The helper extension every phone-driven omp child loads with `-e`. |
 | `omp/child/gate.rs` | 796 | Per-child admission state: the prompt lifecycle, the phase gate that linearises RPCs against retirement, and the RAII leases and waiters around it. |
-| `omp/child/monitor.rs` | 1777 | The monitor task: reading a child's stdout and stderr, dispatching events and RPC responses, and mapping omp state onto the child. |
+| `omp/child/monitor.rs` | 1912 | The monitor task: reading a child's stdout and stderr, dispatching events and RPC responses, and mapping omp state onto the child. |
 | `omp/child/plan_transition.rs` | 288 | Private extension handshake around native fresh-plan session creation. |
 | `omp/child/reap.rs` | 736 | Maintenance: the ticker that reaps idle, unwatched or oversized children and recycles them under memory pressure, and the policy that decides which. |
 | `omp/child/registered.rs` | 146 | Durable physical ownership for registered child admission, separate from routing. |
 | `omp/child/retarget.rs` | 291 | Re-keying a live idle child to another session file: retargeting it at the cap instead of evicting it, and following omp's fork to the copy. |
 | `omp/child/rpc.rs` | 488 | Sending RPC requests to a child: request ids, framing, timeouts, and waiting for the correlated response. |
-| `omp/child/spawn.rs` | 818 | Spawning and opening children: the boot handshake, registration, the command line and settings overlay, and the monitor task's start. |
+| `omp/child/spawn.rs` | 819 | Spawning and opening children: the boot handshake, registration, the command line and settings overlay, and the monitor task's start. |
 | `omp/child/teardown.rs` | 303 | Teardown helpers: killing and gracefully terminating children, submitting signals, and recording how a child exited. |
 | `omp/collab.rs` | 851 | Collab: the encrypted guest attach to a relay room (forward live frames into the WsHub) PLUS the SELF-HOSTED relay that replaces the my.omp.sh dependency. |
 | `omp/collab/fanout.rs` | 500 | Live frame mapping (host → phone WS hub): turning decrypted collab frames into hub broadcasts, link-state notices and dialog bookkeeping. |
@@ -57,7 +57,7 @@ Last verified: 2026-11-18
 | `omp/collab/transcript.rs` | 1565 | Bounded, cancellable transcript reads on a verified live collab connection. |
 | `omp/desktop_control.rs` | 608 | Adapter for the optional omp desktop-control extension. |
 | `omp/native_collab.rs` | 416 | Discovery of active native omp Collab hosts through the supported CLI. |
-| `omp/ui_dialog.rs` | 636 | Dialogs raised by the daemon's own omp children (`extension_ui_request`) and the one reply shape each of them accepts. |
+| `omp/ui_dialog.rs` | 671 | Dialogs raised by the daemon's own omp children (`extension_ui_request`) and the one reply shape each of them accepts. |
 | `omp/ui_feedback.rs` | 301 | Nonblocking extension feedback, independent of pending dialogs and turn state. |
 | `paths.rs` | 926 | Platform-aware paths. |
 | `plugins.rs` | 31 | Plugins: user-supplied folders (a manifest and one client script) that the daemon discovers, hashes, approves and serves, and whose declared host commands ("sources" read on demand, "actions" run on a |
@@ -77,7 +77,7 @@ Last verified: 2026-11-18
 | `server/http/auth.rs` | 410 | Bearer-token authentication and per-route roles, plus the device pairing, listing and revocation endpoints. |
 | `server/http/control.rs` | 533 | Session control endpoints: bash, slash commands, delete, abort and new session. |
 | `server/http/desktop.rs` | 203 | Desktop endpoints: collab attach/detach, collab link registration and announcement, and handing a conversation to the laptop or closing it there. |
-| `server/http/dialog.rs` | 247 | Pending dialogs: which sessions wait for an answer, and answering one from the phone. |
+| `server/http/dialog.rs` | 299 | Pending dialogs: which sessions wait for an answer, and answering one from the phone. |
 | `server/http/export.rs` | 261 | Session export: omp writes an HTML export into a daemon-named file that is served once and unlinked, and a sweeper removes leftovers. |
 | `server/http/files.rs` | 778 | Confined project-file and read-only session-resource endpoints: listing, search, changes, browsing, previews, raw downloads and project-file saves. |
 | `server/http/files/file_io.rs` | 53 | Bounded blocking work for project-file previews and saves. |
@@ -93,7 +93,7 @@ Last verified: 2026-11-18
 | `server/http/prompt.rs` | 714 | The send path: opening and pre-warming sessions, then admitting a prompt and dispatching it to the writer that owns the session. |
 | `server/http/providers.rs` | 544 | Model-provider management for paired devices: list providers and sign in through `omp login`. |
 | `server/http/queue_recovery.rs` | 335 | Durable withdrawn drafts, replayed until the phone explicitly acknowledges them. |
-| `server/http/receipts.rs` | 687 | Command receipts: the receipt endpoints, prompt admission responses and the watcher that settles a prompt's receipt from its child's events. |
+| `server/http/receipts.rs` | 679 | Command receipts: the receipt endpoints, prompt admission responses and the watcher that settles a prompt's receipt from its child's events. |
 | `server/http/rpc.rs` | 946 | The `/api/rpc` endpoint: the allowlist of phone-callable omp RPC commands, their ownership gate, and branch/fork. |
 | `server/http/search.rs` | 418 | `/api/search`: bounded full-text search over the newest session files. |
 | `server/http/socket.rs` | 821 | The WebSocket endpoints: the per-session `/ws` stream, the sessions-list socket and the self-hosted relay socket. |
@@ -111,14 +111,14 @@ Last verified: 2026-11-18
 | `sessions/index/caches.rs` | 208 | Per-file memo caches for the listing's derived fields (snippet, metadata, activity, model, usage), keyed by one stat per row. |
 | `sessions/index/discovery.rs` | 387 | Session discovery: watching the sessions root and its project directories, and turning file events into refresh nudges for the listing. |
 | `sessions/index/memo.rs` | 153 | Bound session memo retention independently of scan completeness or roots. |
-| `sessions/index/page.rs` | 947 | Serving a listing query: catalogue order, cursors, filters, authority projection, page selection and the serialized payload with project summaries. |
+| `sessions/index/page.rs` | 961 | Serving a listing query: catalogue order, cursors, filters, authority projection, page selection and the serialized payload with project summaries. |
 | `sessions/index/scan.rs` | 706 | The full scan behind a refresh: the directory walk, ONE `/proc` ownership sweep, the enrichment of every row and the total-order sort. |
 | `sessions/jsonl.rs` | 421 | Pure synchronous session-file scanning: header parsing, forward/backward history reads, session listing. |
 | `sessions/jsonl/listing.rs` | 391 | Session listing: walking the sessions root, with a header memo validated by each file's (mtime, length) so a refresh only re-reads changed files. |
 | `sessions/jsonl/page.rs` | 588 | Paged history reads: forward from a byte offset and backward from the end, bounded per call and safe against a partially written last line. |
 | `sessions/jsonl/refile.rs` | 649 | Per-project session directories and the startup refile that moves sessions stranded in the sessions root into their project's directory. |
-| `sessions/jsonl/tail.rs` | 716 | Tail reads: the last snippet, metadata, model, turn outcome and pending `ask`, found by paging backward from the end of a session file. |
-| `sessions/jsonl/tree.rs` | 1280 | The `/api/tree` branch shape: user turns, decisions and completed-answer resume targets with turn stats, in omp `/tree` order, cached by file stamp. |
+| `sessions/jsonl/tail.rs` | 942 | Tail reads: the last snippet, metadata, model, turn outcome and pending `ask`, found by paging backward from the end of a session file. |
+| `sessions/jsonl/tree.rs` | 1380 | The `/api/tree` branch shape: user turns, decisions and completed-answer resume targets with turn stats, in omp `/tree` order, cached by file stamp. |
 | `sessions/jsonl/turns.rs` | 409 | The user-turn index (a backward window within a byte budget) and the subagent list (a forward scan) read from a session file. |
 | `sessions/jsonl/usage.rs` | 772 | Whole-session spend and context size, folded forward from a session file. |
 | `sessions/model_usage.rs` | 740 | Read omp's model usage index without taking a SQLite lock. |
@@ -131,11 +131,11 @@ Last verified: 2026-11-18
 | `terminal/adopt/tmux.rs` | 253 | The tmux backend: every pane on the server is a candidate, its screen read with `capture-pane` and `/collab` typed with `send-keys`. |
 | `terminal/handoff.rs` | 1114 | Phone → laptop handoff: open a conversation in a new herdr tab on the laptop. |
 | `terminal/herdr_startup.rs` | 423 | Safely configure and launch the selected Herdr server without tying its lifetime to omp-pulse. |
-| `terminal/herdr_state.rs` | 973 | Live agent-state oracle for laptop-driven sessions. |
+| `terminal/herdr_state.rs` | 979 | Live agent-state oracle for laptop-driven sessions. |
 | `terminal/linkscrape.rs` | 197 | Scraping a collab link out of terminal output. |
 | `types.rs` | 901 | Shared types for the omp-pulse daemon. |
 
-Totals: 126 module files, 75954 lines (test-only files excluded).
+Totals: 126 module files, 76531 lines (test-only files excluded).
 
 A module that outgrew one file is a directory: `x.rs` keeps the module's header,
 its public API and the types its parts share, and `x/<part>.rs` holds one cohesive

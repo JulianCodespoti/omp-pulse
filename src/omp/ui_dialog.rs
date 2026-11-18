@@ -81,8 +81,13 @@ pub fn replay_payload(stored: &Value, now_ms: u64) -> Value {
 
 /// What a `needs_input` push should say: the question itself, never the
 /// method name. `ask` carries its text per question; the first one leads.
+/// Every other method leads with its LAST blank-line-separated paragraph:
+/// omp's field-by-field ask sends `${context}\n\n${question}` as the title,
+/// so notifications used to open with the form's context paragraphs and
+/// bury the question being asked.
 pub fn question_text(request: &Value) -> Option<String> {
-    let text = if request.get("method").and_then(Value::as_str) == Some("ask") {
+    let ask = request.get("method").and_then(Value::as_str) == Some("ask");
+    let text = if ask {
         request
             .pointer("/questions/0/question")
             .and_then(Value::as_str)
@@ -92,9 +97,22 @@ pub fn question_text(request: &Value) -> Option<String> {
             .filter_map(|k| request.get(*k).and_then(Value::as_str))
             .find(|s| !s.trim().is_empty())
     };
-    text.map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
+    let text = text.map(str::trim);
+    let text = if ask { text } else { text.map(last_paragraph) };
+    text.filter(|s| !s.is_empty()).map(str::to_owned)
+}
+
+/// The text after the last blank line (a line that is empty or whitespace).
+fn last_paragraph(text: &str) -> &str {
+    let mut start = 0;
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        at += line.len();
+        if line.trim().is_empty() {
+            start = at;
+        }
+    }
+    text[start..].trim()
 }
 
 fn request_id(request: &Value) -> Result<&str, String> {
@@ -631,6 +649,23 @@ mod tests {
         assert_eq!(
             question_text(&json!({"method": "input", "title": "  "})),
             None
+        );
+    }
+
+    #[test]
+    fn push_text_leads_with_the_field_question_not_the_form_context() {
+        assert_eq!(
+            question_text(&json!({
+                "method": "select",
+                "title": "Deploy plan\nstaging first\n\n  \nWhich region?"
+            }))
+            .as_deref(),
+            Some("Which region?")
+        );
+        assert_eq!(
+            question_text(&json!({"method": "input", "title": "Only one paragraph\nof two lines"}))
+                .as_deref(),
+            Some("Only one paragraph\nof two lines")
         );
     }
 }

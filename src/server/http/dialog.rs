@@ -137,7 +137,11 @@ pub(super) async fn answer_pane(
     // below record every delivered answer, so the index means the same thing
     // whether a child or a laptop pane is asking.
     let ask = crate::sessions::jsonl::pending_ask(&path);
-    if body.get("terminalOnly").and_then(Value::as_bool) == Some(true) && ask.is_some() {
+    let terminal_only = body.get("terminalOnly").and_then(Value::as_bool) == Some(true);
+    if terminal_only && let Some(refusal) = form_ask_refusal(ask.as_ref()) {
+        return err_status(StatusCode::CONFLICT, refusal);
+    }
+    if terminal_only && ask.is_some() {
         return err_status(
             StatusCode::CONFLICT,
             "a structured question is waiting; reopen its answer sheet",
@@ -181,10 +185,14 @@ pub(super) async fn answer_pane(
         }
         // A confirm is never one of the ask's questions (tool approval can
         // interrupt an ask); every other answer is, including the one-select-
-        // per-question fallback of an omp that refused `set_ask_dialog`.
+        // per-question fallback of an omp that refused `set_ask_dialog`. A
+        // form ask has no per-question position to advance: omp walks its
+        // fields through child dialogs and the form is one tool call.
         let delivered = ask
             .as_ref()
-            .filter(|_| request.get("method").and_then(Value::as_str) != Some("confirm"))
+            .filter(|ask| {
+                !ask.form && request.get("method").and_then(Value::as_str) != Some("confirm")
+            })
             .map(|ask| {
                 crate::terminal::herdr_state::record_ask_answer(&session, &ask.call_id);
                 crate::terminal::herdr_state::ask_answers_delivered(&session, &ask.call_id)
@@ -201,6 +209,12 @@ pub(super) async fn answer_pane(
             StatusCode::CONFLICT,
             "an answer is already waiting for this question",
         );
+    }
+    // Refuse a form ask before anything is typed: omp >= 18.18.3 shows it as
+    // a form dialog, so Ask-picker keystrokes and a typed line + Enter both
+    // land in the wrong widget.
+    if let Some(refusal) = form_ask_refusal(ask.as_ref()) {
+        return err_status(StatusCode::CONFLICT, refusal);
     }
     // Branch 3 — laptop pane via the oracle's self-reported session mapping
     // (exact — never a title or recency guess). Pane addressing is direct
@@ -243,5 +257,43 @@ pub(super) async fn answer_pane(
                 "ok": false, "code": "answer_delivery_uncertain", "error": e
             }),
         ),
+    }
+}
+
+/// Why a typed answer must not go to a laptop pane while `ask` is a form.
+/// omp >= 18.18.3 asks with one HTML form dialog; `send_ask_answer` drives
+/// the old Ask picker and a typed line + Enter would land in a form field,
+/// so the only safe answer is the computer's own keyboard.
+fn form_ask_refusal(ask: Option<&crate::sessions::jsonl::PendingAsk>) -> Option<&'static str> {
+    ask.filter(|ask| ask.form)
+        .map(|_| "This question is a form; answer it on the computer.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sessions::jsonl::{AskQuestion, PendingAsk};
+
+    fn ask(form: bool) -> PendingAsk {
+        PendingAsk {
+            call_id: "c".into(),
+            question: "Q?".into(),
+            options: Vec::new(),
+            recommended: None,
+            questions: vec![AskQuestion {
+                question: "Q?".into(),
+                options: Vec::new(),
+                recommended: None,
+                multi: false,
+            }],
+            form,
+        }
+    }
+
+    #[test]
+    fn only_a_form_ask_is_refused_a_pane_answer() {
+        assert!(form_ask_refusal(Some(&ask(true))).is_some());
+        assert!(form_ask_refusal(Some(&ask(false))).is_none());
+        assert!(form_ask_refusal(None).is_none());
     }
 }

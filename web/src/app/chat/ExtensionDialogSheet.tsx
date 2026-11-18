@@ -23,16 +23,22 @@ import {
   type ExtensionDialogResponse,
 } from "../../runtime/extension-dialogs";
 import { useStoreValue } from "../store-hooks";
+import { askToolRunning } from "../../domain/ask-running";
+import { displayOptionLabel } from "../../runtime/extension-dialogs";
 import { BottomSheet } from "../ui/Sheet";
 import { ErrorNotice } from "../ui/ErrorNotice";
 import { LinkedText } from "../ui/LinkedText";
 import { humanizeDaemonError } from "../ui/OwnedBySession";
 import { ALERT_CANCEL, ALERT_DESTRUCTIVE, ConfirmDialog } from "../ui/GroupedList";
 
-// Closing hides a question without answering it. Only an OMP ask cancellation
-// stops the turn (so it says "Stop turn" and asks twice); other extension
-// callbacks define their own cancellation, which only declines the question
-// ("Skip question"). Collab's dialog uses the same two words.
+// Closing hides a question without answering it. Declining one is not always
+// harmless: since omp 18.18.3 its `ask` tool walks an HTML form field by field
+// through generic select/input dialogs, and cancelling ANY field aborts the
+// whole turn and throws away every earlier answer. So whenever an `ask` is
+// running (or the dialog is the structured `ask` method) the dismiss control is
+// the quiet, twice-confirmed "Stop turn"; only unrelated extension prompts,
+// whose cancellation they define themselves, say "Skip question". Collab's
+// dialog uses the same two words.
 
 const EMPTY_ASK: AskDraft = { selected: {}, custom: {} };
 
@@ -95,8 +101,6 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
   if (owner.current !== controller) { owner.current = controller; ownerEpoch.current += 1; }
   const questionKey = (requestId: string): string => JSON.stringify([ownerEpoch.current, sessionPath, requestId]);
   const [handoffs, setHandoffs] = useState<Record<string, "handoff" | "uncertain" | "stale">>({});
-  const dialog = pending.find((entry) => !entry.delivery && !handoffs[questionKey(entry.id)]) ?? pending[0] ?? null;
-  const hasPending = dialog !== null;
 
   // Include the owner in every draft/attempt key: request ids may be reused by
   // another session, and a late completion must never clear its draft or lock.
@@ -110,7 +114,28 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
   const [errors, setErrors] = useState<Record<string, string>>({});
   // Which question's Stop turn confirmation is open; one tap ended the whole turn.
   const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
+  // omp aborts the whole turn when any field of an `ask` form is cancelled, so
+  // every dialog raised while one runs must say "Stop turn".
+  const askRunning = useStoreValue(store, (s) => askToolRunning(s.messages, s.streamingMessage));
   const [now, setNow] = useState(() => Date.now());
+  // A dialog handed to the session is answered: it is never offered again as
+  // the question to answer. Falling back to `pending[0]` once every dialog was
+  // handed off put an omp >= 18.18.3 form's FIRST field back on screen after
+  // the last answer (and between fields) until the turn ended.
+  const answered = (entry: ExtensionDialog): boolean => !!entry.delivery || !!handoffs[questionKey(entry.id)];
+  const unanswered = pending.filter((entry) => !answered(entry));
+  // Still needs the user's eyes: an answer in flight, refused, or of unknown delivery.
+  const troubled = pending.find((entry) => {
+    const key = questionKey(entry.id);
+    return sendingId === key || entry.delivery === "uncertain" || handoffs[key] === "uncertain"
+      || (!!errors[key] && handoffs[key] !== "stale");
+  });
+  // Mid-form, omp sends the next field moments after an answer: stay on the
+  // field just answered rather than dropping the sheet and reopening it. Once
+  // the ask ends there is nothing left to show.
+  const justAnswered = askRunning ? pending.findLast(answered) : undefined;
+  const dialog = unanswered[0] ?? troubled ?? justAnswered ?? null;
+  const hasPending = unanswered.length > 0 || troubled !== undefined;
 
   useEffect(() => {
     setTexts({}); setAsks({}); setHandoffs({}); setErrors({});
@@ -161,6 +186,7 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
   }, []);
 
   if (!dialog) return null;
+  const stopsTurn = dialog.method === "ask" || askRunning;
   const id = questionKey(dialog.id);
   const capacityBlocked = !retained.current.has(id) && retained.current.size >= 64;
   const busy = capacityBlocked || sendingId === id || inFlight.current.has(id) || handoffs[id] !== undefined || dialog.delivery !== undefined;
@@ -207,7 +233,7 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
   // Footers: tonal secondary sized to its label + one filled CTA taking the
   // rest, so the pair never overflows the edge at 150% text.
   const footer = (() => {
-    const skip = dialog.method === "ask" ? (
+    const skip = stopsTurn ? (
       // Quiet on purpose: it ends the agent's turn, so it must never sit beside
       // Submit at the same weight. A second, confirming tap follows.
       <button
@@ -265,11 +291,11 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
             {skip}
             <Button
               className={cta}
-              disabled={busy || (dialog.method === "input" && !text.trim())}
+              disabled={busy}
               data-testid="extension-dialog-send"
-              onClick={() => void send({ value: text })}
+              onClick={() => void send({ value: dialog.method === "input" && !text.trim() ? "" : text })}
             >
-              Send
+              {dialog.method === "input" && !text.trim() ? "Leave blank" : "Send"}
             </Button>
           </div>
         );
@@ -304,12 +330,12 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
         <div className="space-y-4 pb-2" data-method={dialog.method}>
           {errors[id] ? <ErrorNotice message={errors[id]} testId="extension-dialog-error" /> : null}
           {capacityBlocked ? <ErrorNotice message="64 questions already have retained answers. Finish one before answering another; none of your drafts were removed." testId="extension-dialog-capacity" /> : null}
-          {!errors[id] && (sendingId === id || handoffs[id] || dialog.delivery) ? <p role="status" className="text-meta text-muted-foreground">{handoffs[id] === "uncertain" || dialog.delivery === "uncertain" ? "Delivery is unknown. Your answer is kept." : sendingId === id || dialog.delivery === "sending" ? "Sending answer…" : "Handed to the session. Awaiting a session update."}</p> : null}
-          {dialog.method === "ask" ? <p className="text-meta text-muted-foreground">Stop turn ends this turn. Close to answer later.</p> : null}
-          {pending.length > 1 || secondsLeft !== null ? (
+          {!errors[id] && (sendingId === id || handoffs[id] || dialog.delivery) ? <p role="status" className="text-meta text-muted-foreground">{handoffs[id] === "uncertain" || dialog.delivery === "uncertain" ? "Delivery is unknown. Your answer is kept." : sendingId === id || dialog.delivery === "sending" ? "Sending answer…" : "Answer sent."}</p> : null}
+          {stopsTurn ? <p className="text-meta text-muted-foreground">Stop turn ends this turn. Close to answer later.</p> : null}
+          {unanswered.length > 1 || secondsLeft !== null ? (
             <p className="text-caption font-medium tabular-nums text-muted-foreground">
               {[
-                pending.length > 1 ? `1 of ${pending.length} waiting` : null,
+                unanswered.length > 1 ? `1 of ${unanswered.length} waiting` : null,
                 secondsLeft !== null ? `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, "0")} left to answer` : null,
               ]
                 .filter(Boolean)
@@ -330,34 +356,64 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
             </p>
           ) : null}
 
-          {dialog.method === "select" ? (
-            <div className="flex flex-col gap-2" role="group" aria-label={dialog.title || SHEET_TITLE.select}>
-              {(dialog.options ?? []).map((option, index) => (
-                <div key={`${id}-${index}`}>
-                <button
-                  type="button"
-                  disabled={busy}
-                  className={rowClass}
-                  data-testid="extension-dialog-option"
-                  onClick={() => {
-                    if (busy) return;
-                    setChosen({ id, index });
-                    void send({ value: option.label });
-                  }}
-                >
-                  <ChoiceMark multi={false} checked={chosen?.id === id && chosen.index === index} />
-                  <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
-                    <span className="break-words [overflow-wrap:anywhere]">{option.label}</span>
-                    {option.description ? (
-                      <span className="text-meta text-muted-foreground break-words [overflow-wrap:anywhere]">{option.description}</span>
-                    ) : null}
-                  </span>
-                </button>
-                <OptionPreview preview={option.preview} />
+          {dialog.method === "select" ? (() => {
+            const options = dialog.options ?? [];
+            const multi = dialog.selectionMarker === "checkbox";
+            const markable = multi ? dialog.markableCount ?? options.length : options.length;
+            const actions = options.slice(markable);
+            return (
+              <>
+                {multi ? <p className="text-meta text-muted-foreground" data-testid="extension-dialog-selection-help">Tick each choice that applies, then tap Done selecting.</p> : null}
+                <div className="flex flex-col gap-2" role="group" aria-label={dialog.title || SHEET_TITLE.select}>
+                  {options.slice(0, markable).map((option, index) => {
+                    const checked = multi ? dialog.checkedIndices?.includes(index) ?? false : chosen?.id === id && chosen.index === index;
+                    return (
+                      <div key={`${id}-${index}`}>
+                        <button
+                          type="button"
+                          role={multi ? "checkbox" : undefined}
+                          aria-checked={multi ? checked : undefined}
+                          disabled={busy}
+                          className={rowClass}
+                          data-testid="extension-dialog-option"
+                          onClick={() => {
+                            if (busy) return;
+                            if (!multi) setChosen({ id, index });
+                            void send({ value: option.label });
+                          }}
+                        >
+                          <ChoiceMark multi={multi} checked={checked} />
+                          <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+                            <span className="break-words [overflow-wrap:anywhere]">{displayOptionLabel(option.label)}</span>
+                            {option.description ? (
+                              <span className="text-meta text-muted-foreground break-words [overflow-wrap:anywhere]">{option.description}</span>
+                            ) : null}
+                          </span>
+                        </button>
+                        <OptionPreview preview={option.preview} />
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
-          ) : null}
+                {actions.length ? (
+                  <div className="flex flex-col gap-2" data-testid="extension-dialog-selection-actions">
+                    {actions.map((option, offset) => (
+                      <Button
+                        key={`${id}-action-${offset}`}
+                        variant={offset === actions.length - 1 ? "primary" : "secondary"}
+                        className="pressable h-auto min-h-12 w-full whitespace-normal rounded-lg px-4 py-2 text-ui font-semibold leading-tight"
+                        disabled={busy}
+                        data-testid="extension-dialog-action"
+                        onClick={() => void send({ value: option.label })}
+                      >
+                        {displayOptionLabel(option.label)}
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            );
+          })() : null}
 
           {dialog.method === "input" ? (
             <Input
@@ -371,6 +427,10 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
               }}
               placeholder={dialog.placeholder ?? "Type your answer"}
               aria-label={dialog.title || "Your answer"}
+              // An extension asking for a credential marks it secret; the
+              // phone showed it in plain text while it was typed.
+              type={dialog.secret ? "password" : "text"}
+              autoComplete={dialog.secret ? "off" : undefined}
               className={`h-12 ${fieldClass}`}
               enterKeyHint="send"
               data-testid="extension-dialog-input"
@@ -481,7 +541,7 @@ export function ExtensionDialogSheet({ controller, onPendingChange }: ExtensionD
           </>
         }
       />
-      {!open ? (
+      {!open && hasPending ? (
         <button
           type="button"
           data-testid="extension-dialog-reopen"

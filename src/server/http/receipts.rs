@@ -198,10 +198,6 @@ pub(super) async fn watch_child_receipt(
     // Set by a terminal `agent_end`: the outcome to settle with unless the
     // authoritative `prompt_result` lands within AGENT_END_GRACE.
     let mut ended: Option<Option<(String, String)>> = None;
-    // Outcome of a `prompt_result` seen with `sessionSettled: false`: the
-    // turn yielded but background work may still wake the session, so the
-    // receipt waits for the follow-up `session_settled` frame.
-    let mut pending_prompt: Option<Option<(String, String)>> = None;
     loop {
         tokio::select! {
             _ = &mut deadline => {
@@ -265,16 +261,9 @@ pub(super) async fn watch_child_receipt(
                     continue;
                 }
                 let typ = event.get("type").and_then(Value::as_str).unwrap_or("");
-                // `session_settled` carries no `commandId` (upstream
-                // `RpcSessionSettledFrame` is `{type}` only): it settles the
-                // pending `prompt_result` above for this session.
-                if typ == "session_settled" {
-                    if let Some(outcome) = pending_prompt.take() {
-                        settle_received(&ledger, &command_id, outcome);
-                        return;
-                    }
-                    continue;
-                }
+                // `session_settled` carries no `commandId` and settles nothing
+                // here: a prompt's own `prompt_result` is its terminal frame.
+                if typ == "session_settled" { continue; }
                 if event.get("commandId").and_then(Value::as_str) != Some(command_id.as_str()) {
                     continue;
                 }
@@ -284,18 +273,17 @@ pub(super) async fn watch_child_receipt(
                     return;
                 }
                 // `prompt_result` is the terminal frame for an accepted prompt
-                // (emitted exactly once; upstream `RpcPromptResultFrame`): its
-                // `status` carries the outcome and `sessionSettled` says whether
-                // anything can still wake the session. When `sessionSettled` is
-                // false a `session_settled` frame follows once background work
-                // drains — that, not `agent_end`, is the terminal event.
+                // (emitted exactly once, queued steer/follow-ups included;
+                // upstream `RpcPromptResultFrame`): its `status` carries the
+                // outcome. `sessionSettled` describes the SESSION, not this
+                // prompt: omp reports a prompt when the agent yields its work
+                // and `session_settled` follows only once background jobs drain.
                 if typ == "prompt_result" {
                     if event.get("agentInvoked").and_then(Value::as_bool) == Some(false) {
                         settle_received(&ledger, &command_id, None);
                         return;
                     }
                     let status = event.get("status").and_then(Value::as_str).unwrap_or("");
-                    let settled = event.get("sessionSettled").and_then(Value::as_bool).unwrap_or(true);
                     let outcome: Option<(String, String)> = match status {
                         "aborted" => Some((crate::authority::command_ledger::AGENT_ABORTED.to_owned(), "The turn was stopped.".to_owned())),
                         "error" => {
@@ -316,16 +304,13 @@ pub(super) async fn watch_child_receipt(
                         }
                         _ => None,
                     };
-                    if settled {
-                        settle_received(&ledger, &command_id, outcome);
-                        return;
-                    }
-                    ended = None;
-                    // Unsettled: background work may still inject a follow-up.
-                    pending_prompt = Some(outcome);
-                    started = true;
-                    let _ = ledger.update(&command_id, ReceiptState::Running, None, None);
-                    continue;
+                    // An unsettled result used to park the receipt in `running`
+                    // until `session_settled`, which never comes while a
+                    // long-lived background job lives: every answered message
+                    // then sat in the phone's queue bar for as long as the job.
+                    // The prompt is done either way.
+                    settle_received(&ledger, &command_id, outcome);
+                    return;
                 }
                 if typ == "prompt_response" && event.pointer("/data/agentInvoked").and_then(Value::as_bool) == Some(false) {
                     settle_received(&ledger, &command_id, None);
@@ -354,12 +339,6 @@ pub(super) async fn watch_child_receipt(
                     && event.get("isTerminal").and_then(Value::as_bool) != Some(false)
                     && event.get("bridgeLost").and_then(Value::as_bool) != Some(true)
                 {
-                    if pending_prompt.is_some() {
-                        // A `prompt_result` with `sessionSettled: false` owns
-                        // this receipt now; `agent_end` is only one run
-                        // yielding, not the work settling.
-                        continue;
-                    }
                     // Prefer the `prompt_result` that follows; settle from the
                     // turn's messages only if it does not arrive.
                     ended = Some(failure.take());
@@ -662,24 +641,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn receipt_waits_for_session_settled_after_unsettled_prompt_result() {
-        // `agent_end` after an unsettled `prompt_result` is one run yielding,
-        // not the work settling: the receipt must survive it and terminate on
-        // the follow-up `session_settled` (which carries no `commandId`).
+    async fn an_unsettled_prompt_result_settles_the_receipt_without_session_settled() {
+        // Stuck queue rows: omp reports `sessionSettled:false` while a
+        // background job lives and sends `session_settled` only once it drains,
+        // which can be hours away. The prompt is answered at its result.
         let receipt = receipt_after(&[
             json!({"type":"agent_start","commandId":"mine"}),
             json!({"type":"prompt_result","commandId":"mine","agentInvoked":true,"status":"completed","sessionSettled":false}),
             json!({"type":"agent_end","commandId":"mine"}),
-            json!({"type":"session_settled"}),
+        ]).await;
+        assert!(matches!(receipt.state, ReceiptState::Completed));
+        assert_eq!(receipt.code, None);
+    }
+
+    #[tokio::test]
+    async fn a_queued_follow_up_settles_at_its_own_unsettled_prompt_result() {
+        // A follow-up queued into a live turn has no `agent_start` of its own;
+        // omp reports it at the first yield after it left the queue, here with
+        // background work still pending, after another prompt's frames.
+        let receipt = receipt_after(&[
+            json!({"type":"agent_start","commandId":"other"}),
+            json!({"type":"agent_end","commandId":"other"}),
+            json!({"type":"prompt_result","commandId":"other","agentInvoked":true,"status":"completed","sessionSettled":false}),
+            json!({"type":"prompt_result","commandId":"mine","agentInvoked":true,"status":"completed","sessionSettled":false}),
         ]).await;
         assert!(matches!(receipt.state, ReceiptState::Completed));
     }
 
     #[tokio::test]
-    async fn receipt_carries_unsettled_error_through_session_settled() {
+    async fn an_unsettled_prompt_result_keeps_its_error_outcome() {
         let receipt = receipt_after(&[
             json!({"type":"prompt_result","commandId":"mine","agentInvoked":true,"status":"error","sessionSettled":false,"error":{"message":"provider blew up","retryable":false}}),
-            json!({"type":"session_settled"}),
         ]).await;
         assert!(matches!(receipt.state, ReceiptState::Completed));
         assert_eq!(receipt.error.as_deref(), Some("provider blew up"));

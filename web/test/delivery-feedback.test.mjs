@@ -10,10 +10,10 @@ const code = await bundleDomFixture(`
   import {createRoot} from ${JSON.stringify(require.resolve("react-dom/client"))};
   import {QueuedMessage} from ${JSON.stringify(resolve(root,"web/src/app/parts/QueuedMessage.tsx"))};
   import {reportLinkError} from ${JSON.stringify(resolve(root,"web/src/runtime/link-state.ts"))};
-  const calls={retry:[],cancel:[],edit:[]};
+  const calls={retry:[],cancel:[],edit:[],discard:[]};
   window.fixture={act,calls,linkDown:()=>reportLinkError(new TypeError('Failed to fetch')),mount:(entry,reason)=>{
     const r=createRoot(document.getElementById('root'));
-    const render=(next=entry)=>r.render(createElement(QueuedMessage,{entry:next,reason,onRetry:()=>calls.retry.push(next.commandId),onCancel:()=>calls.cancel.push(next.commandId),onEdit:()=>calls.edit.push(next.commandId)}));
+    const render=(next=entry)=>r.render(createElement(QueuedMessage,{entry:next,reason,onRetry:()=>calls.retry.push(next.commandId),onCancel:()=>calls.cancel.push(next.commandId),onDiscard:()=>calls.discard.push(next.commandId),onEdit:()=>calls.edit.push(next.commandId)}));
     render();return {render,unmount:()=>r.unmount()};
   }};
 `);
@@ -36,23 +36,34 @@ async function fixture(t,state,extra={},reason) {
 function assertReason(f,reason){
   const status=f.status();
   assert.equal(status?.getAttribute('title'),reason);
-  assert.equal(status.getAttribute('aria-description'),`This message wasn’t sent. ${reason}`);
-  assert.equal(status.querySelector('p').textContent,`This message wasn’t sent. ${reason}`);
+  assert.equal(status.getAttribute('aria-description'),reason);
+  assert.equal(status.querySelector('p').textContent,reason);
+  // The pill already says "Not sent"; the paragraph must not say it again.
+  assert.doesNotMatch(status.textContent,/wasn’t sent/);
 }
 
-test('failed messages carry the full reason, offer Edit and Remove, and Remove can be undone',async t=>{
+test('failed messages carry the full reason and offer Edit and Discard',async t=>{
   const reason='The desktop session is busy. Try again shortly.';
   const f=await fixture(t,'failed',{},reason);
   assert.equal(f.status().getAttribute('data-state'),'failed');
+  assert.match(f.status().textContent,/^Not sent/);
   assertReason(f,reason);
-  assert.deepEqual(f.labels(),['Edit','Remove']);
+  assert.deepEqual(f.labels(),['Edit','Discard']);
+  assert.equal(f.button('Discard').textContent.trim(),'Discard');
   await f.click('Edit');assert.deepEqual(Array.from(f.calls.edit),['fixture-command']);
-  // Remove hides the row at once; the real cancel waits out the undo window.
-  await f.click('Remove');assert.equal(f.status(),null);assert.equal(f.calls.cancel.length,0);
+  // Discard is the owner's undoable removal: the pill only asks for it.
+  await f.click('Discard');assert.deepEqual(Array.from(f.calls.discard),['fixture-command']);assert.equal(f.calls.cancel.length,0);
   assert.equal(f.calls.retry.length,0);
 });
 
-test('delivery failures keep their reason and offer Edit and Remove',async t=>{
+test('a failed message with no reason shows no paragraph at all',async t=>{
+  const f=await fixture(t,'failed');
+  assert.equal(f.status().textContent.replace(/Edit|Discard/g,'').trim(),'Not sent');
+  assert.equal(f.status().querySelector('p'),null);
+  assert.equal(f.status().getAttribute('aria-description'),null);
+});
+
+test('delivery failures keep their reason and offer Edit and Discard',async t=>{
   for(const [code,error,expected] of [
     ['session_owned_by_terminal','session_owned_by_terminal: Auto-sharing is temporarily unavailable.','Auto-sharing is temporarily unavailable.'],
     ['agent_rejected','agent_rejected: Agent is already processing.','Agent is already processing.'],
@@ -61,7 +72,7 @@ test('delivery failures keep their reason and offer Edit and Remove',async t=>{
   ]){
     const f=await fixture(t,'failed',{code,error});
     assertReason(f,expected);
-    assert.deepEqual(f.labels(),code==='session_owned_by_terminal'?['Edit','Sharing help','Remove']:['Edit','Remove']);
+    assert.deepEqual(f.labels(),code==='session_owned_by_terminal'?['Edit','Sharing help','Discard']:['Edit','Discard']);
     assert.equal(f.calls.retry.length,0);
   }
 });
@@ -86,12 +97,12 @@ test('terminal failure retires prior delivery actions without dispatch',async t=
     const f=await fixture(t,state,{createdAt:Date.now()-7000});
     const oldButton=f.w.document.querySelector('button:not([aria-label="Remove"])');assert.ok(oldButton,state);
     await f.render({state:'failed',error:'Synthetic terminal failure'});
-    assert.equal(f.w.document.querySelector('button:not([aria-label="Remove"]):not([aria-label="Edit"])') === null, true);
+    assert.equal(f.w.document.querySelector('button:not([aria-label="Discard"]):not([aria-label="Edit"])') === null, true);
     await f.w.fixture.act(async()=>{oldButton.click();oldButton.click();oldButton.click();});
     assert.equal(f.calls.retry.length,0);
     // The daemon's raw error is humanized into a sentence, not shown verbatim.
     assertReason(f,'Synthetic terminal failure.');
-    assert.deepEqual(f.labels(),['Edit','Remove']);
+    assert.deepEqual(f.labels(),['Edit','Discard']);
   }
 });
 

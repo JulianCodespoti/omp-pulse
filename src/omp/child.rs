@@ -304,8 +304,17 @@ struct Child {
     /// the map's iteration order, stable within a daemon run — which is all
     /// that matters, since a restart kills the child and empties this map.
     pending_ui: Mutex<HashMap<String, Value>>,
-    /// Private extension marker consumed by its immediately following dialog.
+    /// Private extension marker (`omp-pulse-dialog-scope`): every dialog raised
+    /// between its begin and end belongs to that scope, so the end settles them
+    /// all. It used to cover only the first, but a re-answered omp >= 18.18.3
+    /// form raises one dialog per field.
     dialog_scope: Mutex<Option<String>>,
+    /// The `ask` tool call now executing, from its `tool_execution_start` to
+    /// its `tool_execution_end`. omp >= 18.18.3 asks one HTML form and, with no
+    /// form dialog over RPC, raises one `select`/`input`/`editor` per field;
+    /// dialogs raised meanwhile are stamped with this id so the ask's result
+    /// can retire every answered field, not only a `method:"ask"` dialog.
+    ask_call: Mutex<Option<String>>,
     tree_cancel: Mutex<TreeCancellation>,
     feedback: Mutex<crate::omp::ui_feedback::Feedback>,
     /// Phone-control commands sent to the child extension, awaiting its
@@ -710,12 +719,19 @@ impl ChildManager {
 
     /// Every session whose child is blocked on a phone answer. The inbox shows a
     /// waiting marker from this, so a question does not stay invisible until the
-    /// user happens to open that conversation.
+    /// user happens to open that conversation. A dialog already answered from a
+    /// phone (`pulseDelivery`) is not waiting for anyone: it stays pending only
+    /// until omp proves it settled, and counting it kept a session under
+    /// "Needs you" after its last question was answered.
     pub fn sessions_awaiting_ui(&self) -> Vec<String> {
         let children = lock_poisoned(&self.children);
         children
             .iter()
-            .filter(|(_, c)| !lock_poisoned(&c.pending_ui).is_empty())
+            .filter(|(_, c)| {
+                lock_poisoned(&c.pending_ui)
+                    .values()
+                    .any(|request| request.get("pulseDelivery").is_none())
+            })
             .map(|(path, _)| path.clone())
             .collect()
     }

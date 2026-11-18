@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   EMPTY_EXTENSION_DIALOGS,
+  displayOptionLabel,
+  selectMetadata,
   askDraftComplete,
   askResponse,
   clearExtensionDialogs,
@@ -137,4 +139,40 @@ test('snapshot merges unrelated recovery without rolling back newer questions, c
   assert.equal(state.pending.find(dialog => dialog.id === 'c1').delivery, 'handoff');
   assert.equal(state.closed.includes('s1'), true);
   assert.equal(state.closed.includes('c1'), false);
+});
+
+test('select frames carry omp native checkbox metadata and ignore invalid metadata', () => {
+  const frame = {type: 'extension_ui_request', id: 'c1', method: 'select', title: 'Pick', options: ['A', 'B', 'Done'], selectionMarker: 'checkbox', checkedIndices: [1], markableCount: 2};
+  const dialog = reduceExtensionUiRequest(EMPTY_EXTENSION_DIALOGS, frame, 0).pending[0];
+  assert.equal(dialog.selectionMarker, 'checkbox');
+  assert.deepEqual(dialog.checkedIndices, [1]);
+  assert.equal(dialog.markableCount, 2);
+  const plain = reduceExtensionUiRequest(EMPTY_EXTENSION_DIALOGS, {...frame, id: 'c2', markableCount: 9}, 0).pending[0];
+  assert.equal(plain.selectionMarker, undefined);
+});
+
+
+test('native selection metadata preserves checked indices and markable action boundary', () => {
+  assert.deepEqual(selectMetadata({selectionMarker:'checkbox',checkedIndices:[1,1],markableCount:2,helpText:'Enter selects'},4), {
+    selectionMarker:'checkbox',checkedIndices:[1],markableCount:2,helpText:'Enter selects',
+  });
+  assert.deepEqual(selectMetadata({selectionMarker:'checkbox',checkedIndices:[]},2), {
+    selectionMarker:'checkbox',checkedIndices:[],markableCount:2,
+  });
+});
+test('arbitrary Done labels never create multi-selection and invalid metadata cannot mark actions', () => {
+  assert.deepEqual(selectMetadata({options:['Done selecting','Other']},2),{});
+  for(const metadata of [
+    {selectionMarker:'checkbox',markableCount:3},
+    {selectionMarker:'checkbox',markableCount:-1},
+    {selectionMarker:'checkbox',markableCount:1,checkedIndices:[1]},
+    {selectionMarker:'checkbox',checkedIndices:[0.5]},
+    {selectionMarker:'invented',checkedIndices:[0]},
+  ]) assert.deepEqual(selectMetadata(metadata,2),{});
+});
+test('display label drops one leading private-use glyph but never the sent value', () => {
+  assert.equal(displayOptionLabel('\uF00C Done selecting'), 'Done selecting');
+  assert.equal(displayOptionLabel('\u{F0001}\u{F0002}  X'), '\u{F0002}  X');
+  assert.equal(displayOptionLabel('✔ Done selecting'), '✔ Done selecting');
+  assert.equal(displayOptionLabel('\uF00C'), '\uF00C');
 });

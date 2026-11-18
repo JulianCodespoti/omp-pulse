@@ -136,7 +136,8 @@ type TreeResult = {
   cancelled: boolean;
   aborted?: boolean;
   editorText?: string;
-  reopenAsk?: { toolCallId: string; questions: unknown[] };
+  /** `html` since omp 18.18.3 (one form); `questions` before it. */
+  reopenAsk?: { toolCallId: string; questions?: unknown[]; html?: string };
   askReanswerCommitted?: boolean;
 };
 /** The AgentSession surface this file uses. All of it is internal. */
@@ -233,7 +234,9 @@ type PlanMemory = {
 type HostNamespace = {
   AgentRegistry?: { global?: () => { get?: (id: string) => { session?: unknown } | undefined } };
   USER_INTERRUPT_LABEL?: string;
+  /** omp < 18.18.3; replaced by `recoverAskHtml` when `ask` became one HTML form. */
   recoverAskQuestions?: (args: unknown) => unknown[] | undefined;
+  recoverAskHtml?: (args: unknown) => string | undefined;
   AskTool?: new (session: {
     cwd: string;
     hasUI: true;
@@ -242,7 +245,7 @@ type HostNamespace = {
     getSessionSpawns: () => null;
     getPlanModeState: () => PlanState | undefined;
   }) => {
-    execute: (id: string, args: { questions: unknown[] }, signal: AbortSignal | undefined, update: undefined, context: unknown) => Promise<AskResult>;
+    execute: (id: string, args: { questions: unknown[] } | { html: string }, signal: AbortSignal | undefined, update: undefined, context: unknown) => Promise<AskResult>;
   };
 };
 
@@ -1155,7 +1158,10 @@ export default function ompPulseChild(pi: ExtensionAPI): void {
       const isAsk = entry.type === "message" && entry.message?.role === "toolResult" && entry.message.toolName === "ask";
       if (isAsk) {
         requireMethods(session, "buildAskReanswerContext", "resumeAfterAskReanswer");
-        if (!host?.AskTool || typeof host.recoverAskQuestions !== "function" || !session.settings ||
+        // omp 18.18.3 replaced `recoverAskQuestions` with `recoverAskHtml`;
+        // requiring the old name made every re-answer fail as unsupported.
+        const recover = host?.recoverAskHtml ?? host?.recoverAskQuestions;
+        if (!host?.AskTool || typeof recover !== "function" || !session.settings ||
             typeof sm.getCwd !== "function" || typeof sm.getSessionFile !== "function") {
           throw new PhoneError("Re-answering questions is unavailable in this omp version.");
         }
@@ -1163,7 +1169,7 @@ export default function ompPulseChild(pi: ExtensionAPI): void {
         // fails. Prove the matching call first, so missing questions never move.
         let parent = entry.parentId;
         const seen = new Set<string>();
-        let questions: unknown[] | undefined;
+        let recovered: unknown;
         while (parent && !seen.has(parent)) {
           seen.add(parent);
           const ancestor = sm.getEntry?.(parent);
@@ -1177,13 +1183,15 @@ export default function ompPulseChild(pi: ExtensionAPI): void {
                 const candidate = part as Record<string, unknown>;
                 return candidate.type === "toolCall" && candidate.id === entry.message?.toolCallId && candidate.name === "ask";
               });
-              if (call && typeof call === "object" && "arguments" in call) questions = host.recoverAskQuestions(call.arguments);
+              if (call && typeof call === "object" && "arguments" in call) recovered = recover(call.arguments);
             }
             break;
           }
           parent = ancestor.parentId;
         }
-        if (!questions?.length) throw new PhoneError("The original question is unavailable; no branch was changed.");
+        if (Array.isArray(recovered) ? !recovered.length : !recovered) {
+          throw new PhoneError("The original question is unavailable; no branch was changed.");
+        }
       }
       const options: TreeOptions = {
         summarize: args.summarize === true,
@@ -1219,8 +1227,13 @@ export default function ompPulseChild(pi: ExtensionAPI): void {
               getSessionSpawns: () => null,
               getPlanModeState: () => session.getPlanModeState?.(),
             });
-            answer = await tool.execute("tree-reanswer", { questions: result.reopenAsk.questions },
-              abort.signal, undefined, session.buildAskReanswerContext!(ctx.ui));
+            const reopen = result.reopenAsk;
+            const args = typeof reopen.html === "string" ? { html: reopen.html } : { questions: reopen.questions ?? [] };
+            // A form re-answer raises one dialog per field over RPC; the scope
+            // lets the daemon retire every answered one when this returns,
+            // instead of leaving them waiting until the next turn ends.
+            answer = await scopedDialog(ctx.ui, () => tool.execute("tree-reanswer", args,
+              abort.signal, undefined, session.buildAskReanswerContext!(ctx.ui)));
           } catch (error) {
             if (error instanceof Error && (error.name === "ToolAbortError" || error.name === "AbortError")) {
               return { cancelled: true };

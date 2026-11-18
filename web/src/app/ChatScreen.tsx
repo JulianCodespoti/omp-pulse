@@ -618,9 +618,12 @@ export const ChatScreen = memo(function ChatScreen({
   const browserPending = !usesNativeOutbox();
   // Held follow-ups belong to their queued chip, including native outbox rows.
   const queuedMessages = useStoreValue(store, (s) => s.queuedMessages);
+  // Transcript rows are stamped by the computer's clock, retained sends by
+  // this device's; the shift lets the projection compare them.
+  const clockShift = outbox.length > 0 ? controller.getClockShift() : 0;
   const pendingPresentation = useMemo(() => projectPendingIntents(
-    messages, outbox, sessionPath, outboxScope, controller, browserPending ? "browser" : "native", queuedMessages,
-  ), [messages, outbox, sessionPath, outboxScope, controller, browserPending, queuedMessages]);
+    messages, outbox, sessionPath, outboxScope, controller, browserPending ? "browser" : "native", queuedMessages, clockShift,
+  ), [messages, outbox, sessionPath, outboxScope, controller, browserPending, queuedMessages, clockShift]);
   const pendingSends = pendingPresentation.pending;
   const shownMessages = useMemo(
     () => hideHeldEchoes(pendingPresentation.messages, queuedMessages, outbox),
@@ -758,6 +761,12 @@ export const ChatScreen = memo(function ChatScreen({
   // The daemon's own child asks through ExtensionDialogSheet (its dialogs are
   // replayed on attach); the answer sheet is for questions asked on a laptop.
   const childOwned = useStoreValue(store, (s) => s.sessionPath !== null && selectSessionAuthority(s, s.sessionPath)?.owner.kind === "child");
+  // A collab room delivers the desktop's questions itself, field by field.
+  // Between two fields (and right after the last) no collab question is open,
+  // while the listing still says "waiting" until herdr and the listing poll
+  // catch up; the laptop answer sheet filled that gap and reopened on the
+  // form's FIRST question, which read as the questions looping back.
+  const collabDelivers = useStoreValue(store, (s) => s.collabAttached || (s.sessionPath !== null && selectSessionAuthority(s, s.sessionPath)?.owner.kind === "collab"));
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [openingOnLaptop, setOpeningOnLaptop] = useState(false);
   const [closeOnLaptopOpen, setCloseOnLaptopOpen] = useState(false);
@@ -847,7 +856,8 @@ export const ChatScreen = memo(function ChatScreen({
       if (problem) showToast(problem, "error");
     },
     stopTurn,
-  }), [sessionPath, stopTurn]);
+    dropOptimisticEcho: (commandId) => store.getState().dropOptimisticEcho(commandId),
+  }), [sessionPath, stopTurn, store]);
   // `/plan`, its palette row and the settings switch all land here: plan mode
   // toggles through the daemon's `plan_mode`, never as text the model reads.
   // The tap-time session is captured so a reply cannot land on another chat.
@@ -1141,7 +1151,8 @@ export const ChatScreen = memo(function ChatScreen({
     const isNeedsInputTap = state?.notificationKind === "needs_input";
     if (isNeedsInputTap && (childOwned || summary?.pendingAsk)) {
       if (childOwned) window.dispatchEvent(new CustomEvent("extension-dialog:show"));
-      else if (!quickAskVisible) setAnswerOpen(true);
+      else if (collabDelivers) window.dispatchEvent(new CustomEvent("collab:show"));
+      else if (!quickAskVisible && !summary?.pendingAsk?.form) setAnswerOpen(true);
       // Clear notificationKind so back/forth nav does not re-trigger
       try {
         const nextState = { ...state };
@@ -1149,7 +1160,7 @@ export const ChatScreen = memo(function ChatScreen({
         window.history.replaceState(nextState, "", window.location.href);
       } catch {}
     }
-  }, [summary, quickAskVisible, childOwned]);
+  }, [summary, quickAskVisible, childOwned, collabDelivers]);
 
   // A question asked on the LAPTOP (the desktop omp's `ask`, seen by the
   // daemon as a blocked pane) has no in-chat dialog: CollabDialog only renders
@@ -1157,7 +1168,7 @@ export const ChatScreen = memo(function ChatScreen({
   // the chat then showed nothing at all. The answer sheet is the one surface
   // that can reply to a laptop pane, so the track strip's question pill opens it, and it
   // opens by itself once per question when the chat is entered.
-  const laptopAsk = !hasCollab && !childOwned && summary !== null && sessionStatus(summary) === "waiting";
+  const laptopAsk = !hasCollab && !collabDelivers && !childOwned && summary !== null && sessionStatus(summary) === "waiting";
   const laptopAskKey = laptopAsk && summary.pendingAsk
     ? `${summary.path}\u0000${summary.pendingAsk?.id ?? summary.pendingAsk?.question ?? ""}\u0000${summary.pendingAsk?.index ?? 0}`
     : null;
@@ -1169,8 +1180,10 @@ export const ChatScreen = memo(function ChatScreen({
     }
     if (laptopAskKey === null || shownLaptopAskRef.current === laptopAskKey) return;
     shownLaptopAskRef.current = laptopAskKey;
-    if (!quickAskVisible) setAnswerOpen(true);
-  }, [laptopAsk, laptopAskKey, quickAskVisible]);
+    // A form (omp >= 18.18.3) cannot be answered from the sheet, only on the
+    // computer; the track strip's question pill still opens it to say so.
+    if (!quickAskVisible && !summary?.pendingAsk?.form) setAnswerOpen(true);
+  }, [laptopAsk, laptopAskKey, quickAskVisible, summary?.pendingAsk?.form]);
 
   useEffect(() => {
     if (!answerOpen && !laptopAsk && !summary?.bridge) return;

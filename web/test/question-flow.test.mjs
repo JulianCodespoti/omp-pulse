@@ -48,6 +48,44 @@ test('ask cancellation is a quiet, confirmed Stop turn; declining an unrelated i
  await f.click('extension-dialog-stop-confirm');assert.equal(f.requests[0].response.cancelled,true);
  await f.show('/a',{id:'input',method:'input',title:'Extension prompt'});assert.equal(f.el('extension-dialog-skip').textContent.trim(),'Skip question');assert.equal(f.el('extension-dialog-stop'),null);
 });
+const askRunning=[{id:'u',role:'user',text:'go',parts:[]},{id:'a',role:'assistant',text:'',parts:[{kind:'tool',callId:'c',name:'ask',args:{},state:'running'}]}];
+test('a select raised by a running ask form needs a confirmed Stop turn; without one it says Skip question',async t=>{
+ const select={id:'s',method:'select',title:'Pick one',options:['A','B']};
+ const f=await fixture(t,select);assert.equal(f.el('extension-dialog-skip').textContent.trim(),'Skip question');assert.equal(f.el('extension-dialog-stop'),null);
+ // omp ends the message carrying the call only later: the running ask is still in streamingMessage.
+ await f.act(async()=>f.store.setState({messages:askRunning.slice(0,1),streamingMessage:askRunning[1]}));
+ assert.equal(f.el('extension-dialog-stop').textContent.trim(),'Stop turn');
+ await f.act(async()=>f.store.setState({messages:askRunning,streamingMessage:null}));
+ assert.equal(f.el('extension-dialog-stop').textContent.trim(),'Stop turn');assert.equal(f.el('extension-dialog-skip'),null);
+ await f.click('extension-dialog-stop');assert.equal(f.requests.length,0,'the first tap only asks');
+ await f.click('extension-dialog-stop-confirm');assert.equal(f.requests[0].response.cancelled,true);
+});
+test('a checkbox select shows host ticks and a separate action sends the exact glyph-prefixed label',async t=>{
+ const done='\uF00C Done selecting';
+ const f=await fixture(t,{id:'c',method:'select',title:'Which?',options:['Auth','Cache','Other (type your own)',done],selectionMarker:'checkbox',checkedIndices:[1],markableCount:2});
+ const boxes=[...f.w.document.querySelectorAll('[data-testid="extension-dialog-option"]')];
+ assert.deepEqual(boxes.map(b=>b.getAttribute('role')),['checkbox','checkbox']);
+ assert.deepEqual(boxes.map(b=>b.getAttribute('aria-checked')),['false','true']);
+ const actions=[...f.w.document.querySelectorAll('[data-testid="extension-dialog-action"]')];
+ assert.deepEqual(actions.map(a=>a.textContent.trim()),['Other (type your own)','Done selecting']);
+ await f.act(async()=>boxes[0].click());assert.equal(f.requests[0].response.value,'Auth');
+ await f.act(async()=>f.requests[0].resolve());
+ await f.show('/a',{id:'c2',method:'select',title:'Which?',options:['Auth',done],selectionMarker:'checkbox',checkedIndices:[],markableCount:1});
+ await f.act(async()=>f.w.document.querySelector('[data-testid="extension-dialog-action"]').click());assert.equal(f.requests.at(-1).response.value,done);
+});
+test('a blank input may be left blank explicitly; Enter on a blank box does nothing',async t=>{
+ const f=await fixture(t,{id:'i',method:'input',title:'Optional note'});
+ const send=f.el('extension-dialog-send');assert.equal(send.textContent.trim(),'Leave blank');assert.equal(send.disabled,false);
+ await f.act(async()=>f.el('extension-dialog-input').dispatchEvent(new f.w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})));assert.equal(f.requests.length,0);
+ await f.click('extension-dialog-send');assert.equal(f.requests[0].response.value,'');
+ const g=await fixture(t,{id:'i2',method:'input',title:'Note'});await g.type('extension-dialog-input','Hello');assert.equal(g.el('extension-dialog-send').textContent.trim(),'Send');
+});
+test('a secret input is masked and still sends what was typed',async t=>{
+ const f=await fixture(t,{id:'k',method:'input',title:'API key',secret:true});
+ assert.equal(f.el('extension-dialog-input').getAttribute('type'),'password');
+ await f.type('extension-dialog-input','sk-123');await f.click('extension-dialog-send');assert.equal(f.requests[0].response.value,'sk-123');
+ const g=await fixture(t,{id:'n',method:'input',title:'Name'});assert.equal(g.el('extension-dialog-input').getAttribute('type'),'text');
+});
 test('hide/reopen and session round-trip keep the draft; stale failure cannot alter another owner',async t=>{
  const request={id:'reused',method:'input',title:'Type an answer'},f=await fixture(t,request);await f.type('extension-dialog-input','Keep this');
  await f.click('sheet-close');await f.act(async()=>f.w.dispatchEvent(new f.w.Event('extension-dialog:show')));assert.equal(f.el('extension-dialog-input').value,'Keep this');
@@ -61,10 +99,23 @@ test('uncertain send preserves the draft but never enables duplicate dispatch',a
  await f.act(async()=>f.requests[0].reject(new Error('Network lost')));assert.equal(f.el('extension-dialog-input').value,'Exact draft');assert.equal(f.el('extension-dialog-send').disabled,true);
  await f.click('sheet-close');await f.act(async()=>f.w.dispatchEvent(new f.w.Event('extension-dialog:show')));await f.click('extension-dialog-send');assert.equal(f.requests.length,1);
 });
-test('native handoff keeps entered value visible and cannot be submitted twice',async t=>{
- const f=await fixture(t,{id:'native',method:'input',title:'Answer'});await f.type('extension-dialog-input','Keep after handoff');await f.click('extension-dialog-send');
- await f.act(async()=>f.requests[0].resolve({ok:true}));assert.equal(f.store.getState().extensionDialogs.pending.length,1);assert.equal(f.el('extension-dialog-input').value,'Keep after handoff');assert.equal(f.el('extension-dialog-send').disabled,true);
- await f.click('sheet-close');await f.act(async()=>f.w.dispatchEvent(new f.w.Event('extension-dialog:show')));assert.equal(f.el('extension-dialog-input').value,'Keep after handoff');await f.click('extension-dialog-send');assert.equal(f.requests.length,1);
+test('a handed-off answer closes the sheet, leaves no waiting pill and cannot be submitted twice',async t=>{
+ const f=await fixture(t,{id:'native',method:'input',title:'Answer'});await f.type('extension-dialog-input','Sent once');await f.click('extension-dialog-send');
+ await f.act(async()=>f.requests[0].resolve({ok:true}));assert.equal(f.store.getState().extensionDialogs.pending.length,1,'omp has not closed it yet');
+ assert.equal(f.el('extension-dialog'),null);assert.equal(f.el('extension-dialog-reopen'),null);
+ await f.act(async()=>f.w.dispatchEvent(new f.w.Event('extension-dialog:show')));assert.equal(f.el('extension-dialog'),null);assert.equal(f.requests.length,1);
+});
+test('mid-form the sheet stays on the field just answered, never an earlier one, and drops when the ask ends',async t=>{
+ const f=await fixture(t,{id:'f1',method:'select',title:'Which database?',options:['SQLite','Postgres']});
+ await f.act(async()=>f.store.setState({messages:askRunning}));
+ await f.act(async()=>f.w.document.querySelector('[data-testid="extension-dialog-option"]').click());await f.act(async()=>f.requests[0].resolve({ok:true}));
+ await f.act(async()=>f.store.getState().setExtensionDialogs(state=>({...state,pending:[...state.pending,{id:'f2',method:'input',title:'Notes',expiresAt:null}]})));
+ await f.click('extension-dialog-send');await f.act(async()=>f.requests[1].resolve({ok:true}));
+ // Both fields are handed off; omp is still finishing the ask.
+ assert.match(f.el('extension-dialog').textContent,/Notes/);assert.doesNotMatch(f.el('extension-dialog').textContent,/Which database/);
+ assert.match(f.el('extension-dialog').textContent,/Answer sent\./);
+ await f.act(async()=>f.store.setState({messages:[askRunning[0],{...askRunning[1],parts:[{...askRunning[1].parts[0],state:'ok'}]}]}));
+ assert.equal(f.el('extension-dialog'),null);
 });
 test('a retained handoff does not block a different unsent extension dialog',async t=>{
  const f=await fixture(t,{id:'first',method:'input',title:'First'});await f.type('extension-dialog-input','First answer');await f.click('extension-dialog-send');await f.act(async()=>f.requests[0].resolve({ok:true}));
@@ -105,8 +156,7 @@ test('same-socket snapshots keep exact ask drafts and handoffs until authoritati
  await f.click('extension-dialog-submit');
  await f.act(async()=>f.requests[0].resolve({ok:true}));
  await f.act(async()=>f.w.fixture.snapshot([{...request,pulseDelivery:'handoff'}]));
- assert.equal(f.el('extension-dialog-ask-custom').value,retained);
- assert.equal(f.el('extension-dialog-submit').disabled,true);
+ assert.equal(f.el('extension-dialog'),null,'a handed-off ask is answered; the sheet is gone');
  await f.act(async()=>f.w.fixture.snapshot([]));
  assert.equal(f.el('extension-dialog'),null);
  assert.equal(f.store.getState().extensionDialogs.closed.includes('ask'),true);

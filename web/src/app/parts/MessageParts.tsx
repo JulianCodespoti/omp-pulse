@@ -8,7 +8,7 @@ import { useAppearance } from "@/platform/appearance";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
 import { showErrorToast, showToast } from "@/app/Notices";
-import { UNCERTAIN_SEND_TOAST } from "@/app/send-copy";
+import { SEND_KEPT_NOTICE, UNCERTAIN_SEND_TOAST } from "@/app/send-copy";
 import { Notice } from "@/app/ui/Notice";
 import { daemonErrorCause, humanizeDaemonError } from "@/app/ui/OwnedBySession";
 import { errorRecoveryAction } from "@/app/ui/error-recovery";
@@ -29,7 +29,7 @@ import { SessionResources } from "./SessionResources";
 import { ImagePart } from "./ImagePart";
 import { AgentBubble } from "./Bubble";
 import { AGENT_THREAD, PROSE } from "./prose";
-import { editFailedSend, QueuedMessage } from "./QueuedMessage";
+import { editFailedSend, QueuedMessage, removeSend, type UndoableDiscard } from "./QueuedMessage";
 import { Thought } from "./Thought";
 import { SwitchModelButton, TranscriptActionsContext } from "./TurnNotices";
 import { ToolPart } from "./ToolPart";
@@ -236,6 +236,7 @@ function MessagePartsContent({
   sessionPath,
   rowStatus,
   localPendingEntry,
+  undoable,
   onOpenPath,
   onRetry,
   retryDisabled,
@@ -259,6 +260,8 @@ function MessagePartsContent({
   rowStatus?: UserRowStatus;
   /** Projection supplies proven current local ownership only. */
   localPendingEntry?: QueuedPrompt;
+  /** The transcript row's undoable discards: a Discard hides at once and commits after the undo window. */
+  undoable?: UndoableDiscard;
   onOpenPath?: (path: string) => void;
   /** Offered only on the newest failed turn; re-sends the prompt that started it. */
   onRetry?: () => void;
@@ -299,13 +302,14 @@ function MessagePartsContent({
     return groups;
   }, [hideWork, message, soleCall]);
 
-  const handleCancelQueued = useCallback(async (cancel: () => Promise<unknown>) => {
+  const dropEcho = transcriptActions?.dropOptimisticEcho;
+  const handleCancelQueued = useCallback(async (commandId: string, cancel: () => Promise<boolean>) => {
     try {
-      await cancel();
+      if (!await removeSend(commandId, cancel, dropEcho)) showToast(SEND_KEPT_NOTICE, "info");
     } catch (error) {
       showToast(`Couldn't remove the message. ${humanizeDaemonError(error)}`, "error", errorRecoveryAction(error));
     }
-  }, []);
+  }, [dropEcho]);
 
   const handleRetryQueued = useCallback(
     async (retry: () => Promise<CommandReceipt | null>, checking = false) => {
@@ -327,21 +331,26 @@ function MessagePartsContent({
   // the row's own text and photos and only then removes the row.
   const handleEditFailed = useCallback(async (entry: QueuedPrompt, cancel: () => Promise<boolean>) => {
     try {
-      await editFailedSend(entry, cancel);
+      await editFailedSend(entry, cancel, dropEcho);
     } catch (error) {
       showToast(`Couldn't bring the message back. ${humanizeDaemonError(error)}`, "error", errorRecoveryAction(error));
     }
-  }, []);
+  }, [dropEcho]);
   const queuedPill = useMemo(() => {
     if (message.role !== "user" || !sessionPath) return null;
+    const discard = (entry: QueuedPrompt, cancel: () => Promise<boolean>) => {
+      const remove = () => handleCancelQueued(entry.commandId, cancel);
+      if (undoable) undoable.discard(entry.commandId, remove); else void remove();
+    };
     if (localPendingEntry && isPendingIntent(localPendingEntry)) {
       const actions = localPendingActions(message, localPendingEntry);
       return <QueuedMessage entry={localPendingEntry}
-        onCancel={() => handleCancelQueued(actions.cancel)}
+        onCancel={() => handleCancelQueued(localPendingEntry.commandId, actions.cancel)}
+        onDiscard={() => discard(localPendingEntry, actions.cancel)}
         onEdit={() => handleEditFailed(localPendingEntry, actions.cancel)}
         onRetry={() => void handleRetryQueued(actions.retry, localPendingEntry.state === "uncertain")} />;
     }
-    const pills = rowStatus?.pills;
+    const pills = rowStatus?.pills?.filter((entry) => !undoable?.hidden.has(entry.commandId));
     if (!pills?.length) return null;
     return (
       <div className="space-y-2">
@@ -351,7 +360,8 @@ function MessagePartsContent({
             <QueuedMessage
               key={entry.id}
               entry={entry}
-              onCancel={() => handleCancelQueued(actions.cancel)}
+              onCancel={() => handleCancelQueued(entry.commandId, actions.cancel)}
+              onDiscard={() => discard(entry, actions.cancel)}
               onEdit={() => handleEditFailed(entry, actions.cancel)}
               onRetry={() => void handleRetryQueued(actions.retry, entry.state === "uncertain")}
             />
@@ -365,6 +375,7 @@ function MessagePartsContent({
     sessionPath,
     rowStatus,
     localPendingEntry,
+    undoable,
     handleCancelQueued,
     handleEditFailed,
     handleRetryQueued,

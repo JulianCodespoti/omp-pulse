@@ -395,6 +395,14 @@ export interface OmpSessionActions {
    * the queue chips cleared.
    */
   dropOptimisticEchoes(texts: readonly string[]): void;
+  /**
+   * Remove the one optimistic echo `local:<commandId>` when its outbox entry
+   * was really removed (Discard, or Edit back into the composer). Matched by
+   * command ID, never text: a removed failed "Hello" otherwise stayed behind
+   * as a bubble that looked sent, and the next "Hello" send's canonical row
+   * claimed that stale echo, leaving its own echo duplicated.
+   */
+  dropOptimisticEcho(commandId: string): void;
   setError(error: string | null): void;
   setAuthRejected(rejected: boolean): void;
   setCollabState(state: Record<string, unknown>): void;
@@ -1267,6 +1275,12 @@ export function createOmpStore(): OmpStoreApi {
           left.set(key, count - 1);
           return false;
         });
+        return messages.length === state.messages.length ? state : { messages };
+      }),
+    dropOptimisticEcho: (commandId) =>
+      set((state) => {
+        const id = `local:${commandId}`;
+        const messages = state.messages.filter((message) => message.id !== id);
         return messages.length === state.messages.length ? state : { messages };
       }),
     setError: (error) => set({ error }),

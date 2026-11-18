@@ -13,9 +13,9 @@ export const UNCERTAIN_HINT = "We couldn’t confirm this message arrived. Check
 export const UNCERTAIN_SEND_TOAST = UNCERTAIN_HINT;
 
 /**
- * What a failed send says on both surfaces. The reason is the computer's own
- * refusal, already humanized, and follows the plain statement.
+ * A removal that did not happen because the send moved on (it was delivered,
+ * retried or replaced between the tap and the removal). Without a word the
+ * row simply reappeared, which read as a broken button.
  */
-export function failedSendHint(reason?: string): string {
-  return reason ? `This message wasn’t sent. ${reason}` : "This message wasn’t sent.";
-}
+export const SEND_KEPT_NOTICE = "This message changed, so it was kept.";
+export const EDIT_KEPT_NOTICE = "Your message is back in the composer, but the original changed, so it was kept in the queue.";

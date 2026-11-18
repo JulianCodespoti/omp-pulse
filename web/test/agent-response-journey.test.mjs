@@ -29,7 +29,7 @@ DaemonApi.prototype.getSubagents=async()=>{if(!window.rpc)throw Error('Unexpecte
 DaemonApi.prototype.getSubagentMessages=async(session,options)=>{if(!window.rpc)throw Error('Unexpected RPC transcript');reads.push({session,id:options.subagentId});return{entries:[{type:'message',id:'rpc-entry',message:{role:'assistant',content:[{type:'text',text:'Actual child agent answer'}]}}],nextByte:100}};
 const controller={queueNamespace:namespace,baseUrl:'http://synthetic.invalid',
 canRetainCollabAnswer:()=>false,
-getReceiptScope:OmpSessionController.prototype.getReceiptScope,getSavedPrompts:OmpSessionController.prototype.getSavedPrompts,
+getReceiptScope:OmpSessionController.prototype.getReceiptScope,getSavedPrompts:OmpSessionController.prototype.getSavedPrompts,getClockShift:OmpSessionController.prototype.getClockShift,
 inspectCommandReceipt:OmpSessionController.prototype.inspectCommandReceipt,getReceipt:OmpSessionController.prototype.getReceipt,
 fetchAuthed:async(url,init)=>{receiptReads.push({url,method:init?.method??'GET'});const entry=queue.getSnapshot().find(e=>url.split("?")[0].endsWith(encodeURIComponent(e.commandId)));return{ok:true,status:200,json:async()=>({ok:true,receiptBinding:{version:1,requestedSessionPath:entry.sessionPath,canonicalSessionPath:'/canonical/a'},receipt:{commandId:entry.commandId,sessionPath:'/canonical/a',state:window.receiptState??'forwarded',createdAt:entry.createdAt,updatedAt:Date.now()}})}},
 querySwitcherSessions:async()=>store.getState().sessions,

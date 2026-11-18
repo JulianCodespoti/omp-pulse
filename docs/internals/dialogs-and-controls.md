@@ -91,6 +91,43 @@ Copy and Open, and says that finishing needs the machine running omp. That card
 exists for collab only: an `open_url` from the daemon's own child is forwarded but
 not rendered, so omp's `login` RPC stays off the phone allowlist.
 
+## Form asks (omp 18.18.3 and later)
+
+omp 18.18.3 replaced the `ask` tool's `questions[]` with ONE HTML form
+(`arguments.html`). The daemon reads a pending ask from the session file
+(`pending_ask`), and an `html` call yields a `PendingAsk` with `form: true`: its
+question is the form's first legend, last paragraph before the first control, or
+first label, and it has no options. The session list projects it as
+`pendingAsk: {form: true, index: 0, total: 1, options: []}`. The laptop TUI shows a
+form dialog, not the Ask picker, so `/api/panes/answer` refuses (409) to type into a
+laptop pane for a form ask, with or without `terminalOnly`, and the answer sheet
+offers no options, text box or terminal prompt for it, only Open session. A daemon
+child walks the same form field by field as ordinary `select`/`input`/`editor`
+dialogs, which the chat's dialog sheet answers by exact request ID.
+
+RPC gives no receipt for an answer, so an answered dialog stays pending (marked
+`pulseDelivery`) until something proves it settled. For a form, that proof is the
+`ask` call's `tool_execution_end`: the daemon stamps every dialog raised after the
+call's `tool_execution_start` with its call id (`pulseAskCall`) and retires every
+answered one when it ends. Re-answering from the timeline runs the ask outside a
+tool call, so the child extension wraps it in an `omp-pulse-dialog-scope` marker;
+every dialog raised between `begin` and `end` carries the scope, and `end` retires
+every answered one. Unanswered dialogs are left for omp's own `cancel`. The
+timeline reads a form decision's questions and answers from the result's
+`details.answers`, and its first question from the HTML when the result has none.
+
+An answered dialog is no longer a question. The chat's dialog sheet never shows a
+handed-off dialog as the one to answer: it shows the next unanswered one, else one
+whose delivery is in flight, refused or unknown, else (only while the `ask` call is
+still running, so the sheet does not drop and reopen between fields) the field just
+answered; otherwise it closes, with no "Question waiting" pill. `/api/awaiting` and
+the listing's `waiting` status ignore handed-off child dialogs. A conversation whose
+questions arrive through a collab room never opens the laptop answer sheet by
+itself: between two collab fields, and right after the last, the listing can still
+say `waiting` (herdr's blocked state and the listing poll lag), and that sheet used
+to reappear on the form's first question. A form ask never opens it by itself either,
+since the sheet can only say to answer on the computer.
+
 ## A question must outlive the socket
 
 The desktop broadcasts each `ui-request` exactly ONCE. A phone whose socket is shut

@@ -216,7 +216,11 @@ export interface OmpSessionSummary extends JsonObject {
   /** Entry id of the newest assistant turn `costTotal` includes. */
   usageThrough?: string;
   running?: boolean;
-  /** The question the laptop is on now; `index`/`total` span a multi-question ask. */
+  /**
+   * The question the laptop is on now; `index`/`total` span a multi-question ask.
+   * `form`: omp >= 18.18.3's one-HTML-form ask, which only the computer can
+   * answer (`question` names its first field; there are no options).
+   */
   pendingAsk?: {
     id?: string;
     index?: number;
@@ -224,6 +228,7 @@ export interface OmpSessionSummary extends JsonObject {
     question?: string;
     options?: string[];
     recommended?: number | null;
+    form?: boolean;
   } | null;
   /** A turn a kill or a dead agent cut off (src/authority/interrupted.rs); absent otherwise. */
   interrupted?: OmpInterruption | null;

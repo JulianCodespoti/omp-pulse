@@ -12,9 +12,18 @@ function rowKey(text: string, images: number): string {
   return JSON.stringify([text.trim(), images]);
 }
 
+/** Phone clock minus computer clock can wobble by a drift step between two
+ * frames; a row stamped this much "before" the send is still its echo. */
+const CLOCK_SLACK_MS = 1_000;
+
 /** Canonical rows consume reached intents newest-first, including successful
- * sends, so a repeated prompt's older receipt cannot claim its newer row. */
-function canonicalIntents(messages: readonly UiMessage[], entries: readonly QueuedPrompt[]): Set<string> {
+ * sends, so a repeated prompt's older receipt cannot claim its newer row.
+ * Transcript rows carry the computer's clock and intents the phone's:
+ * `clockShift` (phone minus computer) puts them on one clock before the
+ * "older row never proves a newer send" comparison. */
+function canonicalIntents(
+  messages: readonly UiMessage[], entries: readonly QueuedPrompt[], clockShift: number,
+): Set<string> {
   const rows = new Map<string, UiMessage[]>();
   for (const message of messages) {
     if (message.role !== "user" || (!message.sourceEntryId && message.id.startsWith("local:"))) continue;
@@ -29,7 +38,10 @@ function canonicalIntents(messages: readonly UiMessage[], entries: readonly Queu
     const bucket = rows.get(rowKey(entry.text, entry.imageCount));
     const row = bucket?.at(-1);
     // A known older transcript row is never evidence for this newer intent.
-    if (!row || (row.createdAt && row.createdAt.getTime() < entry.createdAt)) continue;
+    // Compared on the phone's clock: a computer running behind (WSL drifts)
+    // stamped its row before the phone sent it, so the raw comparison never
+    // matched and the delivered message sat in the bar for good.
+    if (!row || (row.createdAt && row.createdAt.getTime() + clockShift + CLOCK_SLACK_MS < entry.createdAt)) continue;
     bucket!.pop();
     matched.add(entry.commandId);
   }
@@ -42,11 +54,12 @@ function canonicalIntents(messages: readonly UiMessage[], entries: readonly Queu
 export function projectPendingIntents(
   messages: UiMessage[], entries: readonly QueuedPrompt[], sessionPath: string | null,
   scope: string, controller: object, mode: "browser" | "native", queued?: QueuedMessages,
+  clockShift = 0,
 ): { messages: UiMessage[]; pending: QueuedPrompt[]; localEntries: Map<UiMessage, QueuedPrompt> } {
   const localEntries = new Map<UiMessage, QueuedPrompt>();
   if (!scope || !sessionPath) return { messages, pending: [], localEntries };
   const scoped = entries.filter(entry => entry.sessionPath === sessionPath);
-  const canonical = mode === "native" ? canonicalIntents(messages, scoped) : new Set<string>();
+  const canonical = mode === "native" ? canonicalIntents(messages, scoped, clockShift) : new Set<string>();
   const held = new Map<string, number>();
   if (mode === "native" && queued) {
     const steering = queued.liveSteered ? queued.steering.slice(queued.liveSteered) : queued.steering;

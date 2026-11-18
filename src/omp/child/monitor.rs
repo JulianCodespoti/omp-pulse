@@ -345,15 +345,20 @@ fn dispatch_value(tx: &broadcast::Sender<ChildEvent>, child: &Arc<Child>, v: &Va
                             waiting.take();
                         }
                         drop(waiting);
-                        let id =
-                            lock_poisoned(&child.pending_ui)
-                                .iter()
-                                .find_map(|(id, request)| {
-                                    (request.get("pulseDialogScope").and_then(Value::as_str)
-                                        == Some(scope))
-                                    .then(|| id.clone())
-                                });
-                        if let Some(id) = id {
+                        // The scoped callback has returned, so every dialog it
+                        // raised is settled: an omp >= 18.18.3 form re-answer
+                        // raises one per field. Only answered ones are closed
+                        // here; omp cancels its own unanswered ones.
+                        let ids: Vec<String> = lock_poisoned(&child.pending_ui)
+                            .iter()
+                            .filter(|(_, request)| {
+                                request.get("pulseDialogScope").and_then(Value::as_str)
+                                    == Some(scope)
+                                    && request.get("pulseDelivery").is_some()
+                            })
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        for id in ids {
                             close_settled_dialog(tx, child, &binding, &id);
                         }
                     }
@@ -558,31 +563,54 @@ fn dispatch_value(tx: &broadcast::Sender<ChildEvent>, child: &Arc<Child>, v: &Va
                     method if crate::omp::ui_dialog::is_blocking(method) => {
                         if let Some(id) = v.get("id").and_then(|x| x.as_str()) {
                             let mut stored = crate::omp::ui_dialog::stored_request(v, now_ms());
-                            if let Some(scope) = lock_poisoned(&child.dialog_scope).take() {
+                            if let Some(scope) = lock_poisoned(&child.dialog_scope).clone() {
                                 stored["pulseDialogScope"] = json!(scope);
+                            }
+                            if let Some(call) = lock_poisoned(&child.ask_call).as_deref() {
+                                stored["pulseAskCall"] = json!(call);
                             }
                             pending_ui.insert(id.to_string(), stored);
                         }
                     }
                     _ => {}
                 }
+            } else if t == "tool_execution_start"
+                && v.get("toolName").and_then(Value::as_str) == Some("ask")
+            {
+                *lock_poisoned(&child.ask_call) = v
+                    .get("toolCallId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
             } else if t == "tool_execution_end"
                 && v.get("toolName").and_then(Value::as_str) == Some("ask")
             {
                 // RPC has no callback receipt. A real ask tool result does
-                // prove that its exclusive question is no longer waiting.
-                let settled = lock_poisoned(&child.pending_ui)
+                // prove that its exclusive question is no longer waiting:
+                // the legacy `method:"ask"` dialog, and since omp 18.18.3
+                // every field dialog its form raised. Settling only the
+                // former left each answered field pending until `agent_end`,
+                // so the phone kept the session in "Needs you" and kept
+                // showing an answered field as waiting while the agent
+                // carried on with its reply.
+                let call = lock_poisoned(&child.ask_call).take();
+                let settled: Vec<String> = lock_poisoned(&child.pending_ui)
                     .iter()
-                    .find_map(|(id, request)| {
-                        (request.get("method").and_then(Value::as_str) == Some("ask")
-                            && request.get("pulseDelivery").is_some())
-                        .then(|| id.clone())
-                    });
-                if let Some(id) = settled {
+                    .filter(|(_, request)| {
+                        request.get("pulseDelivery").is_some()
+                            && (request.get("method").and_then(Value::as_str) == Some("ask")
+                                || call.is_some()
+                                    && request.get("pulseAskCall").and_then(Value::as_str)
+                                        == call.as_deref())
+                    })
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for id in settled {
                     close_settled_dialog(tx, child, &binding, &id);
                 }
             } else if terminal {
                 lock_poisoned(&child.pending_ui).clear();
+                lock_poisoned(&child.ask_call).take();
+                lock_poisoned(&child.dialog_scope).take();
             }
             let mut event = v.clone();
             let command_id = if t == "prompt_result" {
@@ -1221,6 +1249,66 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn ask_result_settles_every_answered_form_field() {
+        // omp >= 18.18.3 walks an `ask` form field by field over RPC. Each
+        // answered field must leave with the ask's result, not at `agent_end`:
+        // until then the phone listed the session as waiting for an answer.
+        let child = stand_in_child();
+        let (tx, mut rx) = broadcast::channel(32);
+        let answer = |id: &str| {
+            let frame = json!({"type":"extension_ui_response","id":id,"value":"x"});
+            start_ui_response_to_child(&tx, Arc::clone(&child), "/synthetic/turn.jsonl", &frame)
+                .unwrap()
+        };
+        dispatch_value(
+            &tx,
+            &child,
+            &json!({"type":"extension_ui_request","method":"confirm","id":"before"}),
+        );
+        assert!(answer("before").await.unwrap().is_ok());
+        dispatch_value(
+            &tx,
+            &child,
+            &json!({"type":"tool_execution_start","toolName":"ask","toolCallId":"form"}),
+        );
+        for field in ["db", "notes"] {
+            dispatch_value(
+                &tx,
+                &child,
+                &json!({"type":"extension_ui_request","method":"select","id":field,"options":["x"]}),
+            );
+            assert!(answer(field).await.unwrap().is_ok());
+        }
+        dispatch_value(
+            &tx,
+            &child,
+            &json!({"type":"extension_ui_request","method":"input","id":"unanswered"}),
+        );
+        while rx.try_recv().is_ok() {}
+        dispatch_value(
+            &tx,
+            &child,
+            &json!({"type":"tool_execution_end","toolName":"ask","toolCallId":"form","result":{}}),
+        );
+        let mut left: Vec<String> = lock_poisoned(&child.pending_ui).keys().cloned().collect();
+        left.sort();
+        assert_eq!(
+            left,
+            ["before", "unanswered"],
+            "only the ask's answered fields settle; omp cancels its own unanswered ones"
+        );
+        let mut closed = Vec::new();
+        while let Ok(ChildEvent::Event { event, .. }) = rx.try_recv() {
+            if event["method"] == "cancel" && event["settled"] == true {
+                closed.push(event["targetId"].as_str().unwrap_or_default().to_owned());
+            }
+        }
+        closed.sort();
+        assert_eq!(closed, ["db", "notes"]);
+        assert!(lock_poisoned(&child.ask_call).is_none());
+    }
+
     // Linux only: the fixture relies on a write to a shut-down socketpair peer
     // failing at once. On macOS that write never completes and the test hung CI.
     #[cfg(target_os = "linux")]
@@ -1357,6 +1445,53 @@ mod tests {
         );
         dispatch_value(&tx, &child, &marker("end", "model"));
         assert!(lock_poisoned(&child.pending_ui).is_empty());
+    }
+
+    #[tokio::test]
+    async fn scope_end_settles_every_answered_dialog_it_raised() {
+        // A form re-answered from the timeline (omp >= 18.18.3) raises one
+        // dialog per field inside one scope; the first-only stamp left the
+        // rest waiting until the next turn ended.
+        let child = stand_in_child();
+        let (tx, _rx) = broadcast::channel(32);
+        let marker = |phase: &str| {
+            json!({
+                "type":"extension_ui_request", "method":"setStatus",
+                "statusKey":"omp-pulse-dialog-scope",
+                "statusText":json!({"phase":phase,"scope":"reanswer"}).to_string()
+            })
+        };
+        dispatch_value(&tx, &child, &marker("begin"));
+        for id in ["db", "notes", "open"] {
+            dispatch_value(
+                &tx,
+                &child,
+                &json!({"type":"extension_ui_request","method":"input","id":id}),
+            );
+        }
+        for id in ["db", "notes"] {
+            let frame = json!({"type":"extension_ui_response","id":id,"value":"x"});
+            start_ui_response_to_child(&tx, Arc::clone(&child), "/synthetic/turn.jsonl", &frame)
+                .unwrap()
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        dispatch_value(&tx, &child, &marker("end"));
+        dispatch_value(
+            &tx,
+            &child,
+            &json!({"type":"extension_ui_request","method":"confirm","id":"later"}),
+        );
+        let pending = lock_poisoned(&child.pending_ui);
+        let mut left: Vec<&str> = pending.keys().map(String::as_str).collect();
+        left.sort();
+        assert_eq!(
+            left,
+            ["later", "open"],
+            "answered fields settle; unanswered wait for omp"
+        );
+        assert!(pending["later"].get("pulseDialogScope").is_none());
     }
 
     /// Answering a dialog tells every client it closed, once, in omp's own

@@ -69,7 +69,7 @@ for (const surface of ['row','bar','notice']) for (const phone of [false,true]) 
  const f=await fixture(t,{surface,phone});
  const before=plain(await f.f.entry()),images=plain(await f.f.images());
  assert.equal(Boolean(f.button('Try again')),false,'terminal failures never retry an old command ID');
- if(surface!=='notice') assert.equal(f.w.document.querySelector(surface==='row'?'[data-testid="send-status"] p':'[data-testid="queued-message"] p')?.textContent,`This message wasn’t sent. ${f.f.humanizeDaemonError(before.error)}`,'the failure cause is visible, not tooltip-only');
+ if(surface!=='notice') assert.equal(f.w.document.querySelector(surface==='row'?'[data-testid="send-status"] p':'[data-testid="queued-message"] p')?.textContent,f.f.humanizeDaemonError(before.error),'the failure cause is visible, not tooltip-only');
  await f.click('Model providers');
  assert.equal(f.destination(),'providers');
  assert.deepEqual(plain(await f.f.entry()),before);assert.deepEqual(plain(await f.f.images()),images);
