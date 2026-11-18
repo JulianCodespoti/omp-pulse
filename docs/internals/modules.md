@@ -93,7 +93,7 @@ Last verified: 2026-11-18
 | `server/http/prompt.rs` | 714 | The send path: opening and pre-warming sessions, then admitting a prompt and dispatching it to the writer that owns the session. |
 | `server/http/providers.rs` | 544 | Model-provider management for paired devices: list providers and sign in through `omp login`. |
 | `server/http/queue_recovery.rs` | 335 | Durable withdrawn drafts, replayed until the phone explicitly acknowledges them. |
-| `server/http/receipts.rs` | 687 | Command receipts: the receipt endpoints, prompt admission responses and the watcher that settles a prompt's receipt from its child's events. |
+| `server/http/receipts.rs` | 679 | Command receipts: the receipt endpoints, prompt admission responses and the watcher that settles a prompt's receipt from its child's events. |
 | `server/http/rpc.rs` | 946 | The `/api/rpc` endpoint: the allowlist of phone-callable omp RPC commands, their ownership gate, and branch/fork. |
 | `server/http/search.rs` | 418 | `/api/search`: bounded full-text search over the newest session files. |
 | `server/http/socket.rs` | 821 | The WebSocket endpoints: the per-session `/ws` stream, the sessions-list socket and the self-hosted relay socket. |
@@ -135,7 +135,7 @@ Last verified: 2026-11-18
 | `terminal/linkscrape.rs` | 197 | Scraping a collab link out of terminal output. |
 | `types.rs` | 901 | Shared types for the omp-pulse daemon. |
 
-Totals: 126 module files, 76491 lines (test-only files excluded).
+Totals: 126 module files, 76483 lines (test-only files excluded).
 
 A module that outgrew one file is a directory: `x.rs` keeps the module's header,
 its public API and the types its parts share, and `x/<part>.rs` holds one cohesive

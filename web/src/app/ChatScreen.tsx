@@ -618,9 +618,12 @@ export const ChatScreen = memo(function ChatScreen({
   const browserPending = !usesNativeOutbox();
   // Held follow-ups belong to their queued chip, including native outbox rows.
   const queuedMessages = useStoreValue(store, (s) => s.queuedMessages);
+  // Transcript rows are stamped by the computer's clock, retained sends by
+  // this device's; the shift lets the projection compare them.
+  const clockShift = outbox.length > 0 ? controller.getClockShift() : 0;
   const pendingPresentation = useMemo(() => projectPendingIntents(
-    messages, outbox, sessionPath, outboxScope, controller, browserPending ? "browser" : "native", queuedMessages,
-  ), [messages, outbox, sessionPath, outboxScope, controller, browserPending, queuedMessages]);
+    messages, outbox, sessionPath, outboxScope, controller, browserPending ? "browser" : "native", queuedMessages, clockShift,
+  ), [messages, outbox, sessionPath, outboxScope, controller, browserPending, queuedMessages, clockShift]);
   const pendingSends = pendingPresentation.pending;
   const shownMessages = useMemo(
     () => hideHeldEchoes(pendingPresentation.messages, queuedMessages, outbox),

@@ -1133,6 +1133,13 @@ export class OmpSessionController {
     return getOutboxSnapshot(this.queueNamespace);
   }
 
+  /** Phone clock minus the computer's, as of the latest daemon frame (0 before
+   * any). Transcript timestamps are the computer's; add this to compare them
+   * with this device's. Includes one frame's latency, so it never reads small. */
+  getClockShift(): number {
+    return this.clockShift;
+  }
+
   getReceiptScope(): string {
     return !this.disposed && this.queueNamespace === getOfflineQueueNamespace()
       ? JSON.stringify([this.baseUrl, this.queueNamespace]) : "";

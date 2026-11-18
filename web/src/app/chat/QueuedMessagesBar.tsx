@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpIcon, CircleAlertIcon, ClockIcon, CornerDownRightIcon, PencilIcon, RefreshCwIcon, SearchIcon, Trash2Icon, XIcon } from "lucide-react";
+import { ArrowUpIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, CircleAlertIcon, ClockIcon, CornerDownRightIcon, PencilIcon, RefreshCwIcon, SearchIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useLayoutEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -24,9 +24,18 @@ import { getDraftNamespace } from "../composer/use-draft";
 
 type QueueRow =
   | { kind: "steering" | "followUp"; text: string; key: string; taken: boolean; itemId?: string }
-  | { kind: "outbox"; text: string; key: string; entry: QueuedPrompt };
+  | { kind: "outbox"; text: string; key: string; entry: QueuedPrompt }
+  | { kind: "summary"; key: string; count: number };
 
 const KIND_LABEL = { steering: "Steering", followUp: "Queued" } as const;
+
+const heldForAgent = (entry: QueuedPrompt) => entry.receipt?.code === "agents_busy";
+
+/** The computer has this message (omp took it; a turn may be running it) and
+ * only the transcript row has yet to confirm it. Not "Sending…": nothing is in
+ * flight. A send held for a free agent is a real wait and keeps its own row. */
+const isDelivered = (entry: QueuedPrompt) =>
+  (entry.state === "accepted" && !heldForAgent(entry)) || entry.state === "received" || entry.state === "running";
 
 /**
  * The one queue surface, directly above the composer card: messages omp is
@@ -54,6 +63,7 @@ export function QueuedMessagesBar({ controller, pending, onChooseModel }: {
   const [inflight] = useState(() => new PendingQueueActions());
   const [busyKeys, setBusyKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [discard, setDiscard] = useState<QueuedPrompt | null>(null);
+  const [showDelivered, setShowDelivered] = useState(false);
   const undo = useUndoableDiscard();
   const isOld = useSlowSend(pending);
   const linkDown = useSendLinkDown();
@@ -65,8 +75,16 @@ export function QueuedMessagesBar({ controller, pending, onChooseModel }: {
   }, [inflight, sessionPath, controller]);
 
   const counts = new Map<string, number>();
+  const visible = pending.filter(entry => !undo.hidden.has(entry.commandId));
+  // Several delivered-but-unconfirmed sends (the transcript row can lag, or
+  // never match across a clock difference) would otherwise stack one
+  // spinner row each and fill the screen above the composer.
+  const deliveredCount = visible.filter(isDelivered).length;
+  const collapseDelivered = deliveredCount > 1;
   const rows: QueueRow[] = [
-    ...pending.filter(entry => !undo.hidden.has(entry.commandId)).map((entry) => ({ kind: "outbox" as const, text: entry.text, key: `outbox\u0000${entry.commandId}`, entry })),
+    ...(collapseDelivered ? [{ kind: "summary" as const, key: "summary\u0000delivered", count: deliveredCount }] : []),
+    ...visible.filter(entry => !collapseDelivered || showDelivered || !isDelivered(entry))
+      .map((entry) => ({ kind: "outbox" as const, text: entry.text, key: `outbox\u0000${entry.commandId}`, entry })),
     ...[
       ...queued.steering.map((text, index) => ({ kind: "steering" as const, text, taken: queued.liveSteered === null || index < queued.liveSteered, itemId: queued.steeringIds?.[index] })),
       ...queued.followUp.map((text, index) => ({ kind: "followUp" as const, text, taken: false, itemId: queued.followUpIds?.[index] })),
@@ -176,6 +194,24 @@ export function QueuedMessagesBar({ controller, pending, onChooseModel }: {
           className="mb-1.5 flex flex-col divide-y divide-hairline overflow-hidden rounded-xl border border-hairline bg-surface-1"
         >
           {rows.map((row) => {
+            if (row.kind === "summary") {
+              return (
+                <li key={row.key} data-testid="queued-delivered-summary" className="flex min-h-[48px] items-center">
+                  <button
+                    type="button"
+                    aria-expanded={showDelivered}
+                    onClick={() => setShowDelivered(shown => !shown)}
+                    className="pressable flex min-h-[48px] w-full items-center gap-2 pl-3 pr-3 text-left text-ui text-foreground"
+                  >
+                    <CheckIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate">{row.count} messages delivered</span>
+                    {showDelivered
+                      ? <ChevronUpIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                      : <ChevronDownIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />}
+                  </button>
+                </li>
+              );
+            }
             const actions = row.kind === "outbox" ? outboxActions(row.entry, row.key) : queueActions(row);
             const busy = busyKeys.has(row.key);
             const outcome = row.kind === "outbox" ? turnOutcome(row.entry) : null;
@@ -223,7 +259,11 @@ export function QueuedMessagesBar({ controller, pending, onChooseModel }: {
                       : phase === "waiting" ? "Waiting for connection"
                       : phase === "retrying" ? "Trying again…"
                       : phase === "stalled" ? "Not sent"
-                      : row.entry.state === "saved" ? "Saved on device" : "Sending…"}
+                      : row.entry.state === "saved" ? "Saved on device"
+                      : row.entry.state === "running" ? "Delivered"
+                      : row.entry.state === "accepted" || row.entry.state === "received"
+                        ? heldForAgent(row.entry) ? "Waiting for a free agent" : "Queued"
+                        : "Sending…"}
                   </span>
                 ) : null}
                 {recovery ? (
@@ -271,7 +311,7 @@ export function QueuedMessagesBar({ controller, pending, onChooseModel }: {
   );
 }
 
-function RowGlyph({ row, phase }: { row: QueueRow; phase: SendPhase | null }) {
+function RowGlyph({ row, phase }: { row: Exclude<QueueRow, { kind: "summary" }>; phase: SendPhase | null }) {
   if (row.kind !== "outbox") {
     const Icon = row.kind === "steering" ? CornerDownRightIcon : ClockIcon;
     return <Icon role="img" aria-label={KIND_LABEL[row.kind]} className="size-4 shrink-0 text-muted-foreground" />;
@@ -279,6 +319,9 @@ function RowGlyph({ row, phase }: { row: QueueRow; phase: SendPhase | null }) {
   if (phase === "waiting") return <ClockIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />;
   if (phase === "stalled" || row.entry.state === "uncertain" || row.entry.state === "failed" || turnOutcome(row.entry) === "refused")
     return <CircleAlertIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />;
+  // The computer holds it: a clock, not a spinner that claims it is in flight.
+  if (row.entry.state === "accepted" || row.entry.state === "received")
+    return <ClockIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />;
   return <Spinner size={16} label={null} className="shrink-0 text-muted-foreground" />;
 }
 
