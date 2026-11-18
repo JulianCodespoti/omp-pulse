@@ -1,6 +1,6 @@
-import { BotIcon, FolderIcon, GitCompareArrowsIcon, ListChecksIcon, SquareTerminalIcon, XIcon } from "lucide-react";
+import { BotIcon, FolderIcon, GitCompareArrowsIcon, ListChecksIcon, PuzzleIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ComponentType, JSX, KeyboardEvent, ReactNode, RefObject } from "react";
+import type { ComponentType, CSSProperties, JSX, KeyboardEvent, ReactNode, RefObject } from "react";
 import type { LucideIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 
 import type { OmpSessionController } from "../../runtime/omp-session-controller";
 import { useSessionTracking, type SessionTracking } from "../chat/session-tracking";
+import { useWorkspacePlugins } from "../plugins/use-plugin-host";
 import { openWorkspace, selectSessionTab, usePanels, type WorkspaceTab } from "./panels";
 import { SidePanel, type PanelSize } from "./SidePanel";
 import { LinkBanner } from "../ui/LinkBanner";
@@ -28,13 +29,25 @@ type PageProps = {
 const tools = () => import("../tools");
 // Order is reach: Agents and Tasks are the pages people check mid-turn, so
 // they come first; the code pages follow.
-const WORKSPACE: readonly { value: WorkspaceTab; label: string; Icon: LucideIcon; Content: ComponentType<PageProps> }[] = [
+type Page = { value: WorkspaceTab; label: string; Icon: LucideIcon; Content: ComponentType<PageProps> };
+const WORKSPACE: readonly Page[] = [
   { value: "agents", label: "Agents", Icon: BotIcon, Content: lazy(() => tools().then((m) => ({ default: m.AgentsTab }))) },
   { value: "tasks", label: "Tasks", Icon: ListChecksIcon, Content: lazy(() => tools().then((m) => ({ default: m.TasksTab }))) },
   { value: "changes", label: "Changes", Icon: GitCompareArrowsIcon, Content: lazy(() => tools().then((m) => ({ default: m.ChangesTab }))) },
   { value: "files", label: "Files", Icon: FolderIcon, Content: lazy(() => tools().then((m) => ({ default: m.FilesTab }))) },
   { value: "terminal", label: "Terminal", Icon: SquareTerminalIcon, Content: lazy(() => tools().then((m) => ({ default: m.TerminalTab }))) },
 ];
+// Plugins (the `workspace` slot) share one page, last, so the built-in pages
+// keep their places as it comes and goes. One page rather than one per
+// plugin: the dock's cells are equal, and a sixth still fits its label and the
+// pill where a seventh would cut both.
+const PLUGINS_PAGE: Page = {
+  value: "plugins",
+  label: "Plugins",
+  Icon: PuzzleIcon,
+  Content: lazy(() => import("../plugins/PluginsTab").then((m) => ({ default: m.PluginsTab }))),
+};
+const WITH_PLUGINS: readonly Page[] = [...WORKSPACE, PLUGINS_PAGE];
 
 // Wide, but a strip of the chat (~15%) stays visible behind the scrim, as
 // ChatGPT's drawer leaves its chat in view.
@@ -53,26 +66,27 @@ const PREFETCH_WINDOW_MS = 4000;
 // The dock's indicator can ride the pager's scroll timeline (styles.css .ws-pill).
 const SCROLL_TIMELINE = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("animation-timeline: scroll()");
 
-const indexOf = (tab: WorkspaceTab) => WORKSPACE.findIndex((t) => t.value === tab);
+const indexIn = (pages: readonly Page[], tab: WorkspaceTab) => pages.findIndex((t) => t.value === tab);
 
-/** Workspace pages within one step of `tab`: the pages a swipe reveals next. */
-function neighbours(tab: WorkspaceTab): WorkspaceTab[] {
-  const at = indexOf(tab);
-  return WORKSPACE.filter((w) => Math.abs(indexOf(w.value) - at) <= 1).map((w) => w.value);
+/** Pages within one step of `tab`: the pages a swipe reveals next. */
+function neighbours(pages: readonly Page[], tab: WorkspaceTab): WorkspaceTab[] {
+  const at = indexIn(pages, tab);
+  return pages.filter((_, i) => Math.abs(i - at) <= 1).map((w) => w.value);
 }
 
 /**
  * A chat and its workspace: the chat is always on screen, and the workspace
- * (Agents · Tasks · Changes · Files · Terminal) is a drawer over it from the
- * right, the mirror of the session switcher (SidePanel). A leftward swipe on
- * the chat or the header's workspace button opens it; a scrim tap, Escape,
+ * (Agents · Tasks · Changes · Files · Terminal, and Plugins while a plugin
+ * draws there) is a drawer over it from the right, the mirror of the session
+ * switcher (SidePanel). A leftward swipe on the chat or the header's
+ * workspace button opens it; a scrim tap, Escape,
  * Back or a rightward swipe on Agents closes it. (The chat used to slide off
  * screen as the first page of one pager, which read as losing the
  * conversation.)
  *
  * Inside the drawer: the page's title and a close button on top, the pages
  * as one native scroll-snap pager, and a bottom tab dock (icon over label,
- * five equal cells, so it never scrolls). The dock's indicator follows the
+ * one equal cell per page, so it never scrolls). The dock's indicator follows the
  * pager's scroll position every frame, and the title follows the page
  * nearest the finger. (The tabs used to be a scrolling pill row at the top
  * that only scrolled a far tab such as Terminal into view once the swipe had
@@ -108,6 +122,12 @@ export function SessionPager({
   // thing on screen and nothing in it depends on the drawers.
   const headerEl = useMemo(() => header(tracking), [header, tracking]);
   const panels = usePanels();
+  const workspacePlugins = useWorkspacePlugins();
+  // One of two fixed lists, so a catalogue refresh that changes nothing keeps
+  // the identity the effects below depend on.
+  const pages = workspacePlugins?.length ? WITH_PLUGINS : WORKSPACE;
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
   const tab = panels.workspace;
   const open = tab !== null;
   const [shown, setShown] = useState<WorkspaceTab>(tab ?? "agents");
@@ -129,7 +149,7 @@ export function SessionPager({
   const mountedRef = useRef(mounted);
   mountedRef.current = mounted;
   // The page nearest the finger, for the title; follows the swipe, not its end.
-  const [near, setNear] = useState(indexOf(shown));
+  const [near, setNear] = useState(indexIn(pages, shown));
   // The drawer was already open on the previous selection: a page change
   // glides; the first selection of an opening drawer cuts straight there.
   const wasOpen = useRef(false);
@@ -156,11 +176,11 @@ export function SessionPager({
       setLive(new Set());
       return;
     }
-    const near = neighbours(shown);
+    const near = neighbours(pages, shown);
     setLive((prev) => new Set([...prev].filter((v) => near.includes(v))));
     const timer = window.setTimeout(() => setLive(new Set(near)), WARM_MS);
     return () => window.clearTimeout(timer);
-  }, [shown, open]);
+  }, [shown, open, pages]);
 
   // One quiet read per chat, once it has settled. Opening the drawer, a hidden
   // tab or a chat switch ends the window; the open drawer's own live set takes
@@ -189,9 +209,9 @@ export function SessionPager({
   // data), so swiping or tapping to a far page never mounts it mid-motion.
   useEffect(() => {
     if (!open) return;
-    const timer = window.setTimeout(() => mount(WORKSPACE.map((w) => w.value)), WARM_MS * 2);
+    const timer = window.setTimeout(() => mount(pages.map((w) => w.value)), WARM_MS * 2);
     return () => window.clearTimeout(timer);
-  }, [open, mount]);
+  }, [open, mount, pages]);
 
   // The dock's indicator follows the pager: at 1.4 pages it sits 40% of the
   // way from the second cell to the third. Cells are equal, so this is one
@@ -199,7 +219,7 @@ export function SessionPager({
   // otherwise the scroll itself is the animation.
   const placed = useRef(-1);
   const placePill = useCallback((position: number, glide = false) => {
-    const clamped = Math.min(Math.max(position, 0), WORKSPACE.length - 1);
+    const clamped = Math.min(Math.max(position, 0), pagesRef.current.length - 1);
     placed.current = clamped;
     const pill = pillRef.current;
     // With scroll-driven animations the pager's timeline moves the pill (styles.css).
@@ -215,9 +235,10 @@ export function SessionPager({
   const jumpTo = useCallback(
     (target: WorkspaceTab) => {
       const pager = pagerNode.current;
-      if (!pager) return;
-      pager.scrollLeft = indexOf(target) * pager.clientWidth;
-      placePill(indexOf(target), true);
+      const at = indexIn(pagesRef.current, target);
+      if (!pager || at < 0) return;
+      pager.scrollLeft = at * pager.clientWidth;
+      placePill(at, true);
     },
     [placePill],
   );
@@ -232,20 +253,26 @@ export function SessionPager({
     const was = wasOpen.current;
     wasOpen.current = open;
     if (tab === null) return;
+    const list = pagesRef.current;
+    const at = indexIn(list, tab);
+    // Not a page right now: Plugins after its last plugin went (the effect
+    // below moves the drawer on).
+    if (at < 0) return;
     const pager = pagerNode.current;
     const from = shownRef.current;
     setShown(tab);
-    mount(neighbours(tab));
+    mount(neighbours(list, tab));
     goLive(tab);
     if (!pager) return;
-    const at = indexOf(tab);
     if (Math.round(pager.scrollLeft / Math.max(1, pager.clientWidth)) === at) {
       placePill(at);
       return;
     }
-    const step = at - indexOf(from);
-    const drawn = WORKSPACE.slice(Math.min(at, indexOf(from)), Math.max(at, indexOf(from)) + 1).every((w) => mountedRef.current.has(w.value));
-    if (was && pager.clientWidth > 0 && (Math.abs(step) === 1 || drawn)) {
+    // The page left may be gone (Plugins); then there is nothing to glide from.
+    const fromAt = indexIn(list, from);
+    const step = fromAt < 0 ? 0 : at - fromAt;
+    const drawn = fromAt >= 0 && list.slice(Math.min(at, fromAt), Math.max(at, fromAt) + 1).every((w) => mountedRef.current.has(w.value));
+    if (was && pager.clientWidth > 0 && fromAt >= 0 && (Math.abs(step) === 1 || drawn)) {
       pager.scrollTo({ left: at * pager.clientWidth, behavior: "smooth" });
       return;
     }
@@ -264,6 +291,13 @@ export function SessionPager({
     }
   }, [tab, open, jumpTo, placePill, mount, goLive]);
 
+  // The Plugins page goes with its last plugin (switched off here or on
+  // another device); a drawer open on it steps back to its neighbour rather
+  // than closing under the finger.
+  useEffect(() => {
+    if (tab !== null && indexIn(pages, tab) < 0) selectSessionTab("terminal");
+  }, [tab, pages]);
+
   // A swipe ends on a page: select it once the scroll settles. A resize
   // (rotation, the drawer unhiding) re-pins the pager to the shown page.
   useEffect(() => {
@@ -275,9 +309,9 @@ export function SessionPager({
     const settle = () => {
       if (pager.clientWidth === 0) return;
       const at = Math.round(pager.scrollLeft / pager.clientWidth);
-      const next = WORKSPACE[at]?.value;
+      const next = pagesRef.current[at]?.value;
       if (!next) return;
-      mount(neighbours(next));
+      mount(neighbours(pagesRef.current, next));
       if (next !== shownRef.current) {
         setShown(next);
         selectSessionTab(next);
@@ -289,7 +323,8 @@ export function SessionPager({
       // A programmatic jump already placed (and is springing) the indicator.
       if (Math.abs(position - placed.current) > 0.001) placePill(position);
       // Draw and start reading whatever page the finger is uncovering.
-      const reveal = WORKSPACE[position > indexOf(shownRef.current) ? Math.ceil(position) : Math.floor(position)]?.value;
+      const list = pagesRef.current;
+      const reveal = list[position > indexIn(list, shownRef.current) ? Math.ceil(position) : Math.floor(position)]?.value;
       if (reveal) {
         mount([reveal]);
         goLive(reveal);
@@ -322,6 +357,9 @@ export function SessionPager({
   const setBody = useCallback((el: HTMLDivElement | null) => {
     screenRef.current = el?.closest<HTMLElement>("[data-screen]") ?? null;
   }, []);
+  // With one plugin the Plugins page is that plugin's own: the title names it.
+  const nearPage = pages[near];
+  const title = nearPage?.value === "plugins" && workspacePlugins?.length === 1 ? workspacePlugins[0].name : nearPage?.label;
 
   return (
     <>
@@ -341,7 +379,7 @@ export function SessionPager({
         <div className="ws-scope group/ws flex min-h-0 flex-1 flex-col">
         <div className="flex h-14 shrink-0 items-center gap-2 pl-5 pr-2">
           <h2 data-testid="workspace-title" className="min-w-0 flex-1 truncate text-title font-semibold">
-            {WORKSPACE[near]?.label}
+            {title}
           </h2>
           <Button
             aria-label="Close workspace"
@@ -362,7 +400,7 @@ export function SessionPager({
           data-session-pager=""
           className="ws-pager flex min-h-0 flex-1 snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {WORKSPACE.map(({ value, label, Content }) => (
+          {pages.map(({ value, label, Content }) => (
             <section
               key={`${sessionPath}:${value}`}
               id={`session-page-${value}`}
@@ -380,7 +418,7 @@ export function SessionPager({
             </section>
           ))}
         </div>
-        <WorkspaceTabs value={shown} tracking={tracking} listRef={tabsRef} pillRef={pillRef} />
+        <WorkspaceTabs pages={pages} value={shown} tracking={tracking} listRef={tabsRef} pillRef={pillRef} />
         </div>
       </SidePanel>
     </>
@@ -413,37 +451,45 @@ const BADGE_TONE = {
 } as const;
 
 /**
- * The workspace's bottom tab dock: five equal cells, an icon over a short
- * label, so every tab is always in view and in thumb reach. Counts are a
- * small badge on the icon in the state's colour. The selected indicator is
- * one pill behind the icons that the pager slides between cells.
+ * The workspace's bottom tab dock: one equal cell per page (five, six with
+ * Plugins), an icon over a short label, so every tab is always in view and in
+ * thumb reach. Counts are a small badge on the icon in the state's colour. The
+ * selected indicator is one pill behind the icons that the pager slides
+ * between cells; `--ws-count` sizes the cells, the pill and its scroll-driven
+ * travel (styles.css .ws-pill).
  */
 function WorkspaceTabs({
+  pages,
   value,
   tracking,
   listRef,
   pillRef,
 }: {
+  pages: readonly Page[];
   value: WorkspaceTab;
   tracking: SessionTracking;
   listRef: RefObject<HTMLDivElement | null>;
   pillRef: RefObject<HTMLSpanElement | null>;
 }): JSX.Element {
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const at = indexOf(value);
+    const at = indexIn(pages, value);
     const target =
-      event.key === "ArrowRight" ? (at + 1) % WORKSPACE.length
-      : event.key === "ArrowLeft" ? (at - 1 + WORKSPACE.length) % WORKSPACE.length
+      event.key === "ArrowRight" ? (at + 1) % pages.length
+      : event.key === "ArrowLeft" ? (at - 1 + pages.length) % pages.length
       : event.key === "Home" ? 0
-      : event.key === "End" ? WORKSPACE.length - 1
+      : event.key === "End" ? pages.length - 1
       : -1;
     if (target < 0) return;
     event.preventDefault();
-    const next = WORKSPACE[target].value;
+    const next = pages[target].value;
     selectSessionTab(next);
     const list = event.currentTarget;
     requestAnimationFrame(() => list.querySelector<HTMLButtonElement>(`[data-value="${next}"]`)?.focus());
   };
+  // Six cells at 390px are about 53px, a hair under "Changes" and "Terminal" at
+  // meta size, which cut them to "Chang…" and "Termi…". The dock's side inset
+  // halves and the labels tighten only then, so five cells look as before.
+  const crowded = pages.length > 5;
   return (
     <div
       ref={listRef}
@@ -451,18 +497,20 @@ function WorkspaceTabs({
       aria-label="Workspace sections"
       data-testid="workspace-tabs"
       onKeyDown={onKeyDown}
+      style={{ "--ws-count": pages.length, "--ws-inset": crowded ? "0.25rem" : "0.5rem" } as CSSProperties}
       // Hidden while a field in the drawer has focus: the keyboard is up.
-      className="relative grid shrink-0 grid-cols-5 px-2 pb-1.5 pt-1 group-has-[:is(input,textarea):focus]/ws:hidden"
+      className="relative grid shrink-0 grid-cols-[repeat(var(--ws-count),minmax(0,1fr))] px-[var(--ws-inset)] pb-1.5 pt-1 group-has-[:is(input,textarea):focus]/ws:hidden"
     >
       <span
         aria-hidden
         data-testid="workspace-tab-bar"
         ref={pillRef}
-        className="ws-pill pointer-events-none absolute left-2 top-1 flex h-8 w-[calc((100%-1rem)/5)] justify-center"
+        className="ws-pill pointer-events-none absolute left-[var(--ws-inset)] top-1 flex h-8 w-[calc((100%-2*var(--ws-inset))/var(--ws-count))] justify-center"
       >
-        <span className="h-full w-14 rounded-full bg-surface-2" />
+        {/* A cell can be under 56px (six on a narrow phone): the pill shrinks rather than overlap its neighbours. */}
+        <span className="h-full w-14 max-w-full rounded-full bg-surface-2" />
       </span>
-      {WORKSPACE.map((t) => {
+      {pages.map((t) => {
         const selected = t.value === value;
         const badge = badgeFor(t.value, tracking);
         return (
@@ -484,7 +532,7 @@ function WorkspaceTabs({
               "text-muted-foreground data-[near]:text-foreground",
             )}
           >
-            <span className="relative grid h-8 w-14 place-items-center">
+            <span className="relative grid h-8 w-14 max-w-full place-items-center">
               <t.Icon aria-hidden className="size-5" strokeWidth={1.9} />
               {badge ? (
                 <span
@@ -500,7 +548,7 @@ function WorkspaceTabs({
                 </span>
               ) : null}
             </span>
-            <span className="max-w-full truncate">{t.label}</span>
+            <span className={cn("max-w-full truncate", crowded && "tracking-tight")}>{t.label}</span>
           </button>
         );
       })}

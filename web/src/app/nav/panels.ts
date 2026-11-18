@@ -9,7 +9,8 @@ import { navigate } from "./navigate";
 // switcher and the pushed layers, ChatScreen's SessionPager mounts the
 // workspace drawer.
 
-export type WorkspaceTab = "changes" | "files" | "agents" | "tasks" | "terminal";
+/** `plugins` exists only while an enabled plugin declares the `workspace` slot (SessionPager). */
+export type WorkspaceTab = "changes" | "files" | "agents" | "tasks" | "terminal" | "plugins";
 /** A page of the workspace drawer's pager. */
 export type SessionTab = "chat" | WorkspaceTab;
 
