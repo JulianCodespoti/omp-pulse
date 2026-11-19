@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `omp-pulse pair` and `omp-pulse setup` now issue an admin code by default, and both print the role a code grants. People who followed the README got a `control` device and could not add a model provider or remove a lost device. The README, Getting started and configuration docs now explain the three roles. In the app, the role descriptions name what each role can't do (a control device can't add model providers), and a phone that is not an admin is told how to become one on its Model providers and Computer screens. Existing devices keep their role: a phone paired as control can pair again with `omp-pulse pair` to become admin.
 
 ### Fixed
+- The thinking level you chose no longer snaps back to the previous one after the conversation has been compacted. Re-opening the chat (or its Session settings) replayed the state read when the compaction finished, so the chip, the model and the context ring went back to what they were then.
+- When the chat's model chip cannot change the model or thinking level, the reason is shown inside its popover (it used to be a red chip with a tooltip a touch screen never shows).
 - A notice with a long conversation title (such as "Reply ready") truncates the title instead of pushing the notice and its Open button past the edge of the screen.
 - A plugin card for a tool call shows once per turn; a turn that edited files no longer repeats it under the edit summary after the reply.
 - Questions from omp's form-based `ask` (omp 18.18.3 and later), which reach the phone one field at a time:

@@ -8,7 +8,7 @@ import { readPairingToken } from "../../platform/browser-storage";
 import { DaemonApi } from "../../runtime/rpc-client";
 import { startVisibleInterval } from "../../runtime/visible-interval";
 import { parsePassiveSessionModel, selectContextPercent, type OmpStore, type OmpStoreApi } from "../../runtime/omp-store";
-import { compactionPending, getCompactionOperation, type CompactOutcome, type CompactPhase } from "../../runtime/compaction";
+import { compactionPending, getCompactionOperation, useFreshCompactionState, type CompactOutcome, type CompactPhase } from "../../runtime/compaction";
 export type { CompactPhase } from "../../runtime/compaction";
 import { useStoreValue } from "../store-hooks";
 import { contextFill } from "../ui/ContextMeter";
@@ -48,14 +48,15 @@ export function useCompaction(store: OmpStoreApi, sessionPath: string | null) {
   currentScope.current = scope;
   const autoStart = useRef<{ scope: typeof scope; before: number | null } | null>(null);
 
+  const observed = useFreshCompactionState(operation, snapshot);
   useEffect(() => {
-    if (!sessionPath || !snapshot.state || store.getState().sessionPath !== sessionPath || (readPairingToken() ?? "") !== token) return;
+    if (!sessionPath || !observed || store.getState().sessionPath !== sessionPath || (readPairingToken() ?? "") !== token) return;
     const current = store.getState();
     current.setSessionModel(
-      parsePassiveSessionModel(snapshot.state, current.sessionModel, current.sessionModelProvenance),
-      snapshot.state.source === "file" ? "file" : "live",
+      parsePassiveSessionModel(observed, current.sessionModel, current.sessionModelProvenance),
+      observed.source === "file" ? "file" : "live",
     );
-  }, [snapshot, sessionPath, token, store]);
+  }, [observed, sessionPath, token, store]);
 
   useEffect(() => { setAutoPhase(null); }, [scope]);
   useEffect(() => {

@@ -11,7 +11,7 @@ import { readPairingToken } from "@/platform/browser-storage";
 import { DaemonApi, isOwnershipError } from "@/runtime/rpc-client";
 import type { SessionState } from "@/runtime/api-types";
 import { parseSessionModel, type SessionModel } from "@/runtime/omp-store";
-import { compactionPending, getCompactionOperation } from "@/runtime/compaction";
+import { compactionPending, getCompactionOperation, useFreshCompactionState } from "@/runtime/compaction";
 import { BottomSheet, SheetLoading } from "@/app/ui/Sheet";
 import { humanizeDaemonError } from "@/app/ui/OwnedBySession";
 import { errorRecoveryAction, type RecoveryAction } from "@/app/ui/error-recovery";
@@ -186,11 +186,12 @@ export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project,
     } };
   }, [ownsView, compactOperation]);
 
+  const observed = useFreshCompactionState(compactOperation, compactSnapshot, open);
   useEffect(() => {
-    if (!ownsView() || !compactSnapshot.state) return;
-    setData(compactSnapshot.state as SettingsData);
-    stateChanged.current?.(parseSessionModel(compactSnapshot.state));
-  }, [compactSnapshot, ownsView]);
+    if (!ownsView() || !observed) return;
+    setData(observed as SettingsData);
+    stateChanged.current?.(parseSessionModel(observed));
+  }, [observed, ownsView]);
 
   const load = useCallback(async () => {
     if (!ownsView() || !sessionPath || pending.current) return;
