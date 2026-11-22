@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { readPairingToken } from "@/platform/browser-storage";
 import { DaemonApi, isOwnershipError } from "@/runtime/rpc-client";
 import type { SessionState } from "@/runtime/api-types";
-import { parseSessionModel, type SessionModel } from "@/runtime/omp-store";
+import { parsePassiveSessionModel, parseSessionModel, type SessionModel, type SessionModelSource } from "@/runtime/omp-store";
 import { compactionPending, getCompactionOperation, useFreshCompactionState } from "@/runtime/compaction";
 import { BottomSheet, SheetLoading } from "@/app/ui/Sheet";
 import { humanizeDaemonError } from "@/app/ui/OwnedBySession";
@@ -122,7 +122,9 @@ type Props = {
   /** Project (cwd basename) these settings belong to; the sheet subtitle (sheets-1). */
   project?: string | null;
   onNeedCollab?: () => void;
-  onStateChanged?: (state: Partial<SessionModel>) => void;
+  onStateChanged?: (state: Partial<SessionModel>, source?: SessionModelSource) => void;
+  /** The chat's held model: what the Model row shows, and what a read may not undo (a configured Auto). */
+  sessionModelHint?: SessionModel | null;
   /** Plan mode as the chat shows it; the switch mirrors it. */
   planMode?: boolean;
   /**
@@ -135,7 +137,7 @@ type Props = {
   onOpenModelPicker?: () => void;
 };
 
-export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project, onNeedCollab, onStateChanged, planMode, onSetPlanMode, onOpenModelPicker }: Props) {
+export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project, onNeedCollab, onStateChanged, sessionModelHint, planMode, onSetPlanMode, onOpenModelPicker }: Props) {
   const [data, setData] = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +158,16 @@ export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project,
   const mounted = useRef(false);
   const stateChanged = useRef(onStateChanged);
   stateChanged.current = onStateChanged;
+  const modelHint = useRef(sessionModelHint);
+  modelHint.current = sessionModelHint;
+  // INVARIANT: a get_state answer reaches the store only through the passive
+  // rules. A native answer carries just the effective effort, so publishing
+  // `parseSessionModel(state)` turned a configured Auto into whatever effort
+  // the last turn resolved to (opening this sheet, or flipping any switch in it,
+  // moved the chip off Auto).
+  const publishState = useCallback((state: SessionState) => {
+    stateChanged.current?.(parsePassiveSessionModel(state, modelHint.current), state.source === "file" ? "file" : "live");
+  }, []);
   const invalidate = useCallback(() => {
     generation.current++;
     pending.current = false;
@@ -190,8 +202,8 @@ export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project,
   useEffect(() => {
     if (!ownsView() || !observed) return;
     setData(observed as SettingsData);
-    stateChanged.current?.(parseSessionModel(observed));
-  }, [observed, ownsView]);
+    publishState(observed);
+  }, [observed, ownsView, publishState]);
 
   const load = useCallback(async () => {
     if (!ownsView() || !sessionPath || pending.current) return;
@@ -217,7 +229,7 @@ export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project,
       if (!current()) return;
       setData(state as SettingsData);
       compactOperation.observe(state);
-      stateChanged.current?.(parseSessionModel(state));
+      publishState(state);
     } catch (e) {
       if (!current()) return;
       if (isOwnershipError(e)) {
@@ -230,7 +242,7 @@ export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project,
       window.clearTimeout(bound);
       if (current()) setLoading(false);
     }
-  }, [ownsView, sessionPath, compactOperation]);
+  }, [ownsView, sessionPath, compactOperation, publishState]);
 
   useEffect(() => {
     void load();
@@ -254,7 +266,7 @@ export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project,
         const state = await api.getState(sessionPath);
         if (!attempt.current()) return;
         setData(state as SettingsData);
-        stateChanged.current?.(parseSessionModel(state));
+        publishState(state);
       } catch (e) {
         if (!attempt.current()) return;
         if (isOwnershipError(e)) {
@@ -266,7 +278,7 @@ export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project,
         attempt.finish();
       }
     },
-    [sessionPath, beginMutation],
+    [sessionPath, beginMutation, publishState],
   );
 
   const handleCompact = useCallback(async () => {
@@ -316,7 +328,11 @@ export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project,
     const api = () => new DaemonApi(readPairingToken() ?? "");
     const readOnly = data.settingsReadOnly === true;
     const model = parseSessionModel(data);
-    const thinking = model.thinkingLevel ?? model.effectiveThinkingLevel;
+    // The row reads what the chat holds (the owner's events and confirmed
+    // changes), not this sheet's own copy of the last answer: that copy carries
+    // only the effective effort, so a configured Auto showed as "Thinking high"
+    // here while the composer chip said Auto.
+    const thinking = sessionModelHint?.thinkingLevel || sessionModelHint?.effectiveThinkingLevel || model.thinkingLevel || model.effectiveThinkingLevel;
     const context = data.contextUsage;
     const contextPercent = typeof context?.percent === "number" && Number.isFinite(context.percent) ? context.percent : null;
     // The values are omp's own (set_steering_mode, set_follow_up_mode, set_interrupt_mode); only the words are ours.
@@ -367,8 +383,8 @@ export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project,
           <Row
             testId="settings-model"
             leading={<SparklesIcon />}
-            title={shortModel(model.model) || "Model not reported"}
-            subtitle={[model.provider, thinking ? `Thinking ${thinking}` : ""].filter(Boolean).join(" · ") || undefined}
+            title={shortModel(sessionModelHint?.model || model.model) || "Model not reported"}
+            subtitle={[sessionModelHint?.provider || model.provider, thinking ? `Thinking ${thinking}` : ""].filter(Boolean).join(" · ") || undefined}
             chevron={Boolean(onOpenModelPicker)}
             onClick={onOpenModelPicker ? () => { onOpenChange(false); onOpenModelPicker(); } : undefined}
           />

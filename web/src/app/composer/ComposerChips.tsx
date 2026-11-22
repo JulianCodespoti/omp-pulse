@@ -14,13 +14,15 @@ import { readPairingToken } from "../../platform/browser-storage";
 import type { ModelInfo } from "../../runtime/api-types";
 import type { OmpStoreApi, SessionModel } from "../../runtime/omp-store";
 import { DaemonApi } from "../../runtime/rpc-client";
+import { settleSessionChange } from "../../runtime/session-model-change";
 import { useBackLayer } from "../back-layer";
 import { shortModel } from "../session-format";
 import { modelKey, rememberRecentModel, useModelCatalogue } from "../sessions/ModelPicker";
 import {
   findSessionModel,
-  levelAfterModelSwitch,
   modelChipLabel,
+  provenModelSwitch,
+  provenThinkingLevel,
   thinkingButtonLabel,
   thinkingChoices,
 } from "../sessions/thinking-levels";
@@ -92,32 +94,39 @@ export function ModelChip({
 
   // INVARIANT: a result only patches the store while its conversation is still
   // the open one; a slow answer must not rename the chip of a chat opened since.
-  const apply = (request: (api: DaemonApi, path: string) => Promise<void>, patch: Partial<SessionModel>, what: string, remember?: string): void => {
+  // `proven` is what the acknowledgement alone establishes; the level omp ended
+  // up with is its own to report (settleSessionChange).
+  const apply = (request: (api: DaemonApi, path: string) => Promise<void>, proven: Partial<SessionModel>, what: string, remember?: string): void => {
     if (!sessionPath || pending.current) return;
     const path = sessionPath;
+    const api = new DaemonApi(readPairingToken());
     pending.current = true;
     setFailure(null);
-    request(new DaemonApi(readPairingToken()), path).then(
-      () => {
-        if (store.getState().sessionPath !== path) return;
-        store.getState().setSessionModel(patch);
-        if (remember) { rememberRecentModel(remember); onModelChanged?.(); }
-      },
-      (error: unknown) => setFailure({ what, reason: humanizeDaemonError(error) }),
-    ).finally(() => { pending.current = false; });
+    void (async () => {
+      try {
+        await request(api, path);
+      } catch (error) {
+        setFailure({ what, reason: humanizeDaemonError(error) });
+        return;
+      }
+      const settled = await settleSessionChange(api, path, proven, store.getState().sessionModel);
+      if (store.getState().sessionPath !== path) return;
+      store.getState().setSessionModel(settled);
+      if (remember) { rememberRecentModel(remember); onModelChanged?.(); }
+    })().finally(() => { pending.current = false; });
   };
   const chooseModel = (next: ModelInfo): void => {
     if (info && modelKey(next) === modelKey(info)) return;
     apply(
       (api, path) => api.setModel(path, next.provider, next.id),
-      { model: next.id, provider: next.provider, thinkingLevel: levelAfterModelSwitch(next, held?.thinkingLevel), contextWindow: next.contextWindow },
+      provenModelSwitch(next, held?.thinkingLevel),
       "model",
       modelKey(next),
     );
   };
   const chooseLevel = (next: string): void => {
     if (next === held?.thinkingLevel) return;
-    apply((api, path) => api.setThinkingLevel(path, next), { thinkingLevel: next }, "thinking level");
+    apply((api, path) => api.setThinkingLevel(path, next), provenThinkingLevel(next), "thinking level");
   };
 
   return (

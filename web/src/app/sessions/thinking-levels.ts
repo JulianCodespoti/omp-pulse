@@ -1,5 +1,6 @@
 import { shortModel } from "../session-format";
 import type { ModelInfo } from "../../runtime/api-types";
+import type { SessionModel } from "../../runtime/omp-store";
 
 /** omp's effort ladder, weakest to strongest (packages/catalog/src/effort.ts). */
 const LADDER = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -27,12 +28,13 @@ export function findSessionModel(models: ModelInfo[], model: string | undefined,
 }
 
 /**
- * The level omp lands on after a model switch, so the header can say so before
- * the (possibly idle, therefore unanswerable) session confirms it. Mirrors
- * `ModelControls.setModel`: the new model's own `defaultLevel` wins, otherwise
- * the current level is kept and clamped DOWN to the nearest supported effort
- * (or up to the weakest when it is below all of them). `off` survives. A model
- * without a thinking control has no level: `""`.
+ * The level a NEW session is asked to start with when its model is picked: a
+ * request (`set_model` carries it and the daemon verifies it), never a claim
+ * about an open session, whose level is whatever omp reports after a switch
+ * (see `provenModelSwitch`). Mirrors `ModelControls.setModel`: the new model's
+ * own `defaultLevel` wins, otherwise the current level is kept and clamped DOWN
+ * to the nearest supported effort (or up to the weakest when it is below all of
+ * them). `off` survives. A model without a thinking control has no level: `""`.
  */
 export function levelAfterModelSwitch(model: ModelInfo, current: string | undefined): string {
   // Native model changes retain the selector, even if the new model cannot
@@ -53,6 +55,32 @@ export function levelAfterModelSwitch(model: ModelInfo, current: string | undefi
     clamped = effort;
   }
   return clamped ?? efforts[0];
+}
+
+/**
+ * What an acknowledged model switch certainly changed: the model. omp's
+ * model-only switch can clear or clamp the effort rather than follow
+ * `levelAfterModelSwitch`, so no level is claimed (`""`, which the chip and
+ * picker draw as no level) until the owner reports one. Auto is the exception:
+ * omp keeps the selector across a switch. `contextWindow` is the catalogue's,
+ * superseded by the owner's own when it reports one.
+ */
+export function provenModelSwitch(model: ModelInfo, current: string | undefined): Partial<SessionModel> {
+  return {
+    model: model.id,
+    provider: model.provider,
+    ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
+    thinkingLevel: current === "auto" ? "auto" : "",
+  };
+}
+
+/**
+ * What an acknowledged thinking-level request establishes: the request itself,
+ * pending the owner's report (omp may clamp it). A concrete level is also the
+ * effective one; Auto resolves per turn, so no effective level is claimed.
+ */
+export function provenThinkingLevel(level: string): Partial<SessionModel> {
+  return level === "auto" ? { thinkingLevel: level } : { thinkingLevel: level, effectiveThinkingLevel: level };
 }
 
 /** Segment text: short enough for six segments on a phone. */

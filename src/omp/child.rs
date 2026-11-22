@@ -68,7 +68,13 @@ use tracing::{debug, info, warn};
 /// Bounds on the stderr tail attached to an unexpected child exit.
 const STDERR_TAIL_LINES: usize = 4;
 const STDERR_TAIL_CHARS: usize = 200;
-const NEGOTIATE_TIMEOUT: Duration = Duration::from_secs(10);
+/// `negotiate_protocol` is the first frame written to a child, and omp reads
+/// stdin only once it has booted. This deadline therefore bounds the whole
+/// cold start (runtime, extensions, MCP servers, model registry), not one
+/// request. Under load a Pi hit the old 10 s limit before an idle session's
+/// model change could even be sent. A child that exits during startup still
+/// fails immediately when the reply channel closes.
+const NEGOTIATE_TIMEOUT: Duration = Duration::from_secs(60);
 const SUBSCRIBE_TIMEOUT: Duration = Duration::from_secs(5); // non-fatal on failure
 const SWITCH_SESSION_TIMEOUT: Duration = Duration::from_secs(30);
 const GET_STATE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -817,7 +823,7 @@ impl ChildManager {
 
     /// Lazy spawn/reuse. Coalesces concurrent opens for the same path so only
     /// one child is ever spawned for it (server.ts `opening` map). Sequence:
-    /// spawn → negotiate_protocol{protocolVersion:2} (10s) →
+    /// spawn → negotiate_protocol{protocolVersion:2} (60s: includes the cold boot) →
     /// set_subagent_subscription{level:"progress"} (5s, non-fatal) →
     /// switch_session{sessionPath} (30s) → get_state (30s).
     pub async fn open(&self, session_path: &str) -> Result<(), String> {
