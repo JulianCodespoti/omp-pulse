@@ -2613,6 +2613,7 @@ export const ChatScreen = memo(function ChatScreen({
       <LazyMount open={sessionSettingsOpen} onClose={() => setSessionSettingsOpen(false)}>
         <LazySessionSettingsSheet
           onStateChanged={store.getState().setSessionModel}
+          sessionModelHint={sessionModel}
           onNeedCollab={() => {
             setSessionSettingsOpen(false);
             setCollabOpen(true);

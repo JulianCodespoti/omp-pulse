@@ -14,19 +14,22 @@ import { readPairingToken } from "../../platform/browser-storage";
 import type { ModelInfo } from "../../runtime/api-types";
 import type { OmpStoreApi, SessionModel } from "../../runtime/omp-store";
 import { DaemonApi } from "../../runtime/rpc-client";
+import { settleSessionChange } from "../../runtime/session-model-change";
 import { useBackLayer } from "../back-layer";
 import { shortModel } from "../session-format";
 import { modelKey, rememberRecentModel, useModelCatalogue } from "../sessions/ModelPicker";
 import {
   findSessionModel,
-  levelAfterModelSwitch,
   modelChipLabel,
+  provenModelSwitch,
+  provenThinkingLevel,
   thinkingButtonLabel,
   thinkingChoices,
 } from "../sessions/thinking-levels";
 import { useStoreValue } from "../store-hooks";
 import { contextFill } from "../ui/ContextMeter";
 import { ContextRing } from "../ui/ContextRing";
+import { humanizeDaemonError } from "../ui/OwnedBySession";
 import { ProviderLogo } from "../ui/ProviderLogo";
 
 // 36px chip; the pseudo-element stretches the hit area to 44px.
@@ -57,7 +60,9 @@ export function ModelChip({
   const held = useStoreValue(store, (s) => s.sessionModel);
   const model = held?.model ?? fallbackModel ?? undefined;
   const [open, setOpen] = useState(false);
-  const [failed, setFailed] = useState(false);
+  // What the last refused change was and why; shown in the popover, because the
+  // chip's tooltip never appears on a touch screen and the pill simply stayed put.
+  const [failure, setFailure] = useState<{ what: string; reason: string } | null>(null);
   const pending = useRef(false);
   // The catalogue is read only while the popover is open.
   const catalogue = useModelCatalogue(sessionPath, open);
@@ -89,31 +94,39 @@ export function ModelChip({
 
   // INVARIANT: a result only patches the store while its conversation is still
   // the open one; a slow answer must not rename the chip of a chat opened since.
-  const apply = (request: (api: DaemonApi, path: string) => Promise<void>, patch: Partial<SessionModel>, remember?: string): void => {
+  // `proven` is what the acknowledgement alone establishes; the level omp ended
+  // up with is its own to report (settleSessionChange).
+  const apply = (request: (api: DaemonApi, path: string) => Promise<void>, proven: Partial<SessionModel>, what: string, remember?: string): void => {
     if (!sessionPath || pending.current) return;
     const path = sessionPath;
+    const api = new DaemonApi(readPairingToken());
     pending.current = true;
-    setFailed(false);
-    request(new DaemonApi(readPairingToken()), path).then(
-      () => {
-        if (store.getState().sessionPath !== path) return;
-        store.getState().setSessionModel(patch);
-        if (remember) { rememberRecentModel(remember); onModelChanged?.(); }
-      },
-      () => setFailed(true),
-    ).finally(() => { pending.current = false; });
+    setFailure(null);
+    void (async () => {
+      try {
+        await request(api, path);
+      } catch (error) {
+        setFailure({ what, reason: humanizeDaemonError(error) });
+        return;
+      }
+      const settled = await settleSessionChange(api, path, proven, store.getState().sessionModel);
+      if (store.getState().sessionPath !== path) return;
+      store.getState().setSessionModel(settled);
+      if (remember) { rememberRecentModel(remember); onModelChanged?.(); }
+    })().finally(() => { pending.current = false; });
   };
   const chooseModel = (next: ModelInfo): void => {
     if (info && modelKey(next) === modelKey(info)) return;
     apply(
       (api, path) => api.setModel(path, next.provider, next.id),
-      { model: next.id, provider: next.provider, thinkingLevel: levelAfterModelSwitch(next, held?.thinkingLevel), contextWindow: next.contextWindow },
+      provenModelSwitch(next, held?.thinkingLevel),
+      "model",
       modelKey(next),
     );
   };
   const chooseLevel = (next: string): void => {
     if (next === held?.thinkingLevel) return;
-    apply((api, path) => api.setThinkingLevel(path, next), { thinkingLevel: next });
+    apply((api, path) => api.setThinkingLevel(path, next), provenThinkingLevel(next), "thinking level");
   };
 
   return (
@@ -125,8 +138,8 @@ export function ModelChip({
             data-testid="composer-model"
             data-level={level || undefined}
             aria-label={`Model: ${label}. Change model`}
-            title={failed ? "Couldn’t change the model" : undefined}
-            className={cn(CHIP, "min-w-0 shrink text-foreground", failed && "text-danger")}
+            title={failure ? `Couldn’t change the ${failure.what}` : undefined}
+            className={cn(CHIP, "min-w-0 shrink text-foreground", failure && "text-danger")}
           />
         }
       >
@@ -172,6 +185,11 @@ export function ModelChip({
               ))}
             </div>
           </div>
+        ) : null}
+        {failure ? (
+          <p role="alert" data-testid="composer-model-error" className="px-3 pb-2 pt-1 text-meta text-danger">
+            Couldn’t change the {failure.what}. {failure.reason}
+          </p>
         ) : null}
         <DropdownMenuItem data-testid="composer-model-all" onClick={onOpenModelPicker} className="mt-1 text-muted-foreground">
           <span className="flex-1">All models…</span>

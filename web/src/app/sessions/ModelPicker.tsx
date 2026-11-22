@@ -13,10 +13,11 @@ import { shortModel } from "../session-format";
 import { ProviderLogo } from "../ui/ProviderLogo";
 import { readPairingToken } from "../../platform/browser-storage";
 import { DaemonApi, isOwnershipError } from "../../runtime/rpc-client";
-import { parsePassiveSessionModel, rememberContextWindows, type SessionModel } from "../../runtime/omp-store";
+import { parsePassiveSessionModel, rememberContextWindows, type SessionModel, type SessionModelSource } from "../../runtime/omp-store";
+import { settleSessionChange } from "../../runtime/session-model-change";
 import type { ModelInfo } from "../../runtime/api-types";
 import { compareByRelease } from "./model-order";
-import { levelAfterModelSwitch, thinkingButtonLabel, thinkingChoices } from "./thinking-levels";
+import { levelAfterModelSwitch, provenModelSwitch, provenThinkingLevel, thinkingButtonLabel, thinkingChoices } from "./thinking-levels";
 import { ScreenActivityContext } from "../nav/screen-activity";
 
 const RECENT_KEY = "omp-recent-models";
@@ -393,7 +394,7 @@ type SessionProps = {
   sessionPath: string | null;
   currentModelHint?: string | null;
   sessionModelHint?: SessionModel | null;
-  onStateChanged?: (state: Partial<SessionModel>) => void;
+  onStateChanged?: (state: Partial<SessionModel>, source?: SessionModelSource) => void;
   onChanged?: (model: string) => void;
   draft?: undefined;
 };
@@ -476,6 +477,7 @@ function SessionModelPicker({ open, onOpenChange, sessionPath, currentModelHint,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [ownedByState, setOwnedByState] = useState(false);
+  const [errorWhat, setErrorWhat] = useState("model");
   const mutationEpoch = useRef(0);
   const mutationPending = useRef(false);
   const propsRef = useRef({ sessionPath, open, currentModelHint, sessionModelHint, onStateChanged, onChanged });
@@ -498,12 +500,16 @@ function SessionModelPicker({ open, onOpenChange, sessionPath, currentModelHint,
     setError(null);
     setOwnedByState(false);
     let cancelled = false;
+    // A change made from this sheet is newer than a read still in flight.
+    const epoch = mutationEpoch.current;
     const api = new DaemonApi(readPairingToken());
     void api.getState(sessionPath, { peek: true }).then((state) => {
-      if (cancelled) return;
+      if (cancelled || mutationEpoch.current !== epoch) return;
       const parsed = parsePassiveSessionModel(state, propsRef.current.sessionModelHint ?? undefined);
       setCurrent((previous) => ({ ...previous, ...parsed }));
-      propsRef.current.onStateChanged?.(parsed);
+      // A file snapshot stays file-owned in the store, so it never freezes a
+      // value as live that a later file read (or the owner) should still refresh.
+      propsRef.current.onStateChanged?.(parsed, state.source === "file" ? "file" : "live");
     }).catch((e: unknown) => {
       if (!cancelled && isOwnershipError(e)) setOwnedByState(true);
     });
@@ -536,7 +542,10 @@ function SessionModelPicker({ open, onOpenChange, sessionPath, currentModelHint,
   const owned = ownedByState || (catalogue.error !== null && isOwnershipError(catalogue.error));
   const unavailable = busy || catalogue.loading || owned || !sessionPath;
 
-  async function mutate(action: (api: DaemonApi, path: string) => Promise<void>, patch: Partial<SessionModel>): Promise<void> {
+  // `proven` is what the acknowledgement alone establishes. The level omp ended
+  // up with (it can clear or clamp the one asked for) is its own to report, so
+  // the result written is the owner's answer over `proven` (settleSessionChange).
+  async function mutate(action: (api: DaemonApi, path: string) => Promise<void>, proven: Partial<SessionModel>, what: string): Promise<void> {
     if (!sessionPath || !propsRef.current.open || unavailable || mutationPending.current) return;
     const path = sessionPath;
     mutationPending.current = true;
@@ -549,28 +558,19 @@ function SessionModelPicker({ open, onOpenChange, sessionPath, currentModelHint,
       await action(api, path);
       // An old chat or a closed/reopened picker cannot own this completion.
       if (!isCurrentMutation()) return;
-      setCurrent((previous) => ({ ...previous, ...patch }));
-      propsRef.current.onStateChanged?.(patch);
-      if (patch.model) {
-        const key = `${patch.provider}/${patch.model}`;
+      const settled = await settleSessionChange(api, path, proven, propsRef.current.sessionModelHint);
+      if (!isCurrentMutation()) return;
+      setCurrent((previous) => ({ ...previous, ...settled }));
+      propsRef.current.onStateChanged?.(settled);
+      if (proven.model) {
+        const key = `${proven.provider}/${proven.model}`;
         rememberRecentModel(key);
         propsRef.current.onChanged?.(key);
-      }
-      const state = await api.getState(path, { peek: true }).catch(() => null);
-      // INVARIANT: a file snapshot never overrides what was just acknowledged. An
-      // idle session's peek is read from the session file, and omp has not
-      // flushed the change it just made there: adopting that snapshot reverted
-      // the choice the reader had just confirmed (pill and sheet snapped back
-      // to the previous model). parsePassiveSessionModel lets only a live
-      // answer replace known values.
-      if (state && isCurrentMutation()) {
-        const actual = parsePassiveSessionModel(state, { ...propsRef.current.sessionModelHint, ...patch });
-        setCurrent((previous) => ({ ...previous, ...actual }));
-        propsRef.current.onStateChanged?.(actual);
       }
     } catch (e: unknown) {
       if (!isCurrentMutation()) return;
       if (isOwnershipError(e)) setOwnedByState(true);
+      setErrorWhat(what);
       setError(e);
     } finally {
       if (isCurrentMutation()) { mutationPending.current = false; setBusy(false); }
@@ -584,7 +584,7 @@ function SessionModelPicker({ open, onOpenChange, sessionPath, currentModelHint,
       {owned ? (
         <Notice tone="info" action={errorRecoveryAction("session_owned_by_terminal")}>Controlled on your computer.</Notice>
       ) : error || catalogueError && catalogue.models.length > 0 ? (
-        <Notice tone="danger" title={catalogueError && !error ? "Couldn’t load models." : "Couldn’t change the model."} action={errorRecoveryAction(error ?? catalogue.error) ?? (catalogueError ? { label: "Retry", icon: RotateCwIcon, onClick: catalogue.retry } : undefined)}>{error ? humanizeDaemonError(error) : catalogueError}</Notice>
+        <Notice tone="danger" title={catalogueError && !error ? "Couldn’t load models." : `Couldn’t change the ${errorWhat}.`} action={errorRecoveryAction(error ?? catalogue.error) ?? (catalogueError ? { label: "Retry", icon: RotateCwIcon, onClick: catalogue.retry } : undefined)}>{error ? humanizeDaemonError(error) : catalogueError}</Notice>
       ) : null}
       {fallback ? (
         <Notice tone="info" title="Automatic model fallback" testId="model-fallback">
@@ -614,13 +614,13 @@ function SessionModelPicker({ open, onOpenChange, sessionPath, currentModelHint,
       empty={owned || error ? null : catalogue.error ? (
         <ModelLoadFailure error={catalogue.error} onRetry={catalogue.retry} />
       ) : <NoModels onOpenChange={onOpenChange} />}
-      onSelectModel={(model) => void mutate((api, path) => api.setModel(path, model.provider, model.id), { model: model.id, provider: model.provider, thinkingLevel: levelAfterModelSwitch(model, current.thinkingLevel) })}
-      onSelectLevel={(level) => void mutate((api, path) => api.setThinkingLevel(path, level), { thinkingLevel: level })}
+      onSelectModel={(model) => void mutate((api, path) => api.setModel(path, model.provider, model.id), provenModelSwitch(model, current.thinkingLevel), "model")}
+      onSelectLevel={(level) => void mutate((api, path) => api.setThinkingLevel(path, level), provenThinkingLevel(level), "thinking level")}
       usage={current.ctxPercent == null ? undefined : { percent: current.ctxPercent, windowTokens: current.contextWindow }}
       trailingFooter={current.fastMode === undefined ? null : (
         <label className="flex shrink-0 items-center gap-3 text-meta text-muted-foreground">
           {current.fastMode && current.fastModeActive === false ? <span data-testid="fast-mode-inactive">Not available for this model</span> : "Fast mode"}
-          <Switch aria-label="Fast mode" checked={current.fastMode} disabled={unavailable} onCheckedChange={(enabled) => void mutate((api, path) => api.setFastMode(path, enabled), { fastMode: enabled })} />
+          <Switch aria-label="Fast mode" checked={current.fastMode} disabled={unavailable} onCheckedChange={(enabled) => void mutate((api, path) => api.setFastMode(path, enabled), { fastMode: enabled }, "fast mode")} />
         </label>
       )}
     />

@@ -1220,11 +1220,14 @@ export function createOmpStore(): OmpStoreApi {
       }
       // INVARIANT: window and live percent belong to ONE model. A switch that
       // does not carry its own would keep the previous model's window and show
-      // a context percentage that no longer describes this conversation.
+      // a context percentage that no longer describes this conversation. The
+      // effective effort is the same kind of fact: omp may clear or clamp it on a
+      // switch, so the old model's value must not label the new one (an
+      // "Opus · High" chip on a model with no thinking control).
       const switched = defined.model !== undefined && state.sessionModel?.model !== undefined
         && windowKey(defined.model) !== windowKey(state.sessionModel.model);
       const base = switched
-        ? { ...state.sessionModel, contextWindow: undefined, ctxPercent: undefined, contextMeasuredAfter: undefined, fastModeActive: undefined }
+        ? { ...state.sessionModel, contextWindow: undefined, ctxPercent: undefined, contextMeasuredAfter: undefined, fastModeActive: undefined, effectiveThinkingLevel: undefined }
         : defined.ctxPercent !== undefined ? { ...state.sessionModel, contextMeasuredAfter: undefined } : state.sessionModel;
       const sessionModel = { ...base, ...defined };
       if (sessionModel.model && sessionModel.contextWindow) rememberContextWindows([{ id: sessionModel.model, contextWindow: sessionModel.contextWindow }]);

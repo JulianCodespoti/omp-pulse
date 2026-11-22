@@ -1,3 +1,5 @@
+import { useRef } from "react";
+
 import { readPairingToken } from "../platform/browser-storage";
 import type { SessionState } from "./api-types";
 import { AuthError, DaemonApi, ForbiddenError, isOwnershipError } from "./rpc-client";
@@ -144,4 +146,22 @@ export function getCompactionOperation(token: string, path: string): CompactionO
   let operation = sessions.get(path);
   if (!operation) sessions.set(path, operation = new CompactionOperation(token, path));
   return operation;
+}
+
+/**
+ * The `state` of a compaction snapshot, but only when the operation published
+ * it while this surface was watching (`watching`: the surface is on screen).
+ *
+ * WHY: the operation lives in a module-level map for the whole app run and keeps
+ * its last `state`, a peek taken when the compaction ended. Surfaces used to
+ * adopt `snapshot.state` in an effect, which runs on every mount, so re-opening
+ * the chat (or A -> B -> A) replayed that old observation into the store as if
+ * it were current and the thinking chip snapped back to the level the session
+ * had when it was compacted. What a surface finds already there predates its
+ * visit and the store has moved on; only a later publication is news.
+ */
+export function useFreshCompactionState(operation: CompactionOperation, snapshot: CompactSnapshot, watching = true): SessionState | undefined {
+  const baseline = useRef<{ operation: CompactionOperation; snapshot: CompactSnapshot } | null>(null);
+  if (!watching || baseline.current?.operation !== operation) baseline.current = { operation, snapshot };
+  return snapshot === baseline.current.snapshot ? undefined : snapshot.state;
 }

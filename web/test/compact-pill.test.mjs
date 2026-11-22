@@ -239,3 +239,22 @@ test('a real failure is distinct from uncertainty and does not poll or automatic
   await p.flush();
   assert.deepEqual(p.calls, ['compact']);
 });
+
+// REGRESSION: the thinking chip "toggled back". A finished compaction keeps its
+// peek `state` on the module-level operation for the life of the app, and the
+// hook re-adopted that snapshot on every mount (re-opening the chat, A -> B -> A),
+// so a level chosen after the compaction was replaced by the one it ran under.
+test('a compaction observation is adopted when it is made, not again on every later visit', async t => {
+  const p = await pill(t, { sessionModel: { model: 'm', contextWindow: 1000, ctxPercent: 45, thinkingLevel: 'low' } });
+  const compact = p.reply();
+  await p.run();
+  const state = p.reply();
+  compact({ ok: true, data: { tokensBefore: 450 } });
+  state({ ok: true, data: { thinkingLevel: 'low', configuredThinkingLevel: 'low', contextUsage: { tokens: 90, contextWindow: 1000, percent: 9 } } });
+  await p.flush();
+  assert.equal(p.phase().kind, 'done');
+  assert.equal(p.store.getState().sessionModel.ctxPercent, 9, 'the observation itself still lands');
+  await p.set({ sessionModel: { ...p.store.getState().sessionModel, thinkingLevel: 'high' } });
+  await p.remount();
+  assert.equal(p.store.getState().sessionModel.thinkingLevel, 'high', 'a later visit must not replay the old observation');
+});

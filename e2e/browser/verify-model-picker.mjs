@@ -145,6 +145,9 @@ try {
   }).then((r) => r.json());
   const listed = Array.isArray(catalogue.data) ? catalogue.data : catalogue.data?.models ?? [];
   const revisionOf = new Map(listed.map((m) => [`${m.provider}/${m.id}`, m.identity?.revision]));
+  // Exercise both changes on a model that can actually accept High. The first
+  // catalogue row can be non-reasoning, silently skipping half the scenario.
+  const thinkingModels = listed.filter((m) => m.thinking?.efforts?.includes("high")).map((m) => `${m.provider}/${m.id}`);
   const cmp = (a, b) => { for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = (b[i] ?? 0) - (a[i] ?? 0); if (d) return d; } return 0; };
   let compared = 0, descending = true;
   for (const ids of groupIds) {
@@ -229,14 +232,14 @@ try {
   }
 
   // One-tap model selection updates the always-visible model chip without a poll.
-  const chosen = await page.evaluate(() => {
-    const target = Array.from(document.querySelectorAll("[data-testid='model-item']")).find((row) => row.getAttribute("data-current") !== "true");
+  const chosen = await page.evaluate((candidates) => {
+    const target = Array.from(document.querySelectorAll("[data-testid='model-item']")).find((row) => row.getAttribute("data-current") !== "true" && candidates.includes(row.getAttribute("data-model")));
     if (!(target instanceof HTMLElement)) return null;
     const result = { id: target.getAttribute("data-model"), label: target.querySelector("[data-testid='model-name']")?.textContent || "" };
     target.click();
     return result;
-  });
-  check("a different model can be selected", chosen !== null, JSON.stringify(chosen));
+  }, thinkingModels);
+  check("a different High-capable model can be selected", chosen !== null, JSON.stringify(chosen));
   await wait(3000);
   const afterSelection = await page.evaluate(() => {
     const selected = document.querySelector("[data-testid='model-current-check']")?.closest("[data-testid='model-item']");
@@ -277,6 +280,7 @@ try {
     button.click();
     return true;
   });
+  check("the selected model offers High", high);
   if (high) {
     await wait(1500);
     const thinking = await page.evaluate(() => ({
@@ -284,6 +288,15 @@ try {
       chip: document.querySelector("[data-testid='composer-model']")?.getAttribute("data-level"),
     }));
     check("thinking updates the segment and the composer model chip", thinking.high === "true" && thinking.chip === "high", JSON.stringify(thinking));
+    // The chip and the sheet share an optimistic store. Agreement between them
+    // alone cannot prove either setting reached the process running the chat.
+    const response = await fetch(`${BASE}/api/rpc`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionPath, command: "get_state", params: {} }),
+    });
+    const { data: state } = await response.json();
+    check("the live agent confirms the selected model and High", !!chosen && `${state?.model?.provider}/${state?.model?.id}` === chosen.id && (state?.configuredThinkingLevel ?? state?.thinkingLevel) === "high");
     // The thinking row lives in the chip's popover (once the model's catalogue entry has loaded).
     await page.keyboard.press("Escape");
     await wait(900);

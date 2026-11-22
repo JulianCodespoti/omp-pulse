@@ -9,7 +9,7 @@ import {
 import { ReceiptValidationError, RECEIPT_BINDING_CAPABILITY, validateBoundReceiptResponse, validateCommandReceipt, retainedReceiptBinding } from "./command-receipt";
 import { acknowledgeNativeSave, usesNativeOutbox } from "./native-outbox";
 import { deliveryFailed } from "./receipt-outcome";
-import { fetchWithDeadline, readJsonResponse, readRequestSignal } from "./request";
+import { CATALOGUE_READ_TIMEOUT_MS, fetchWithDeadline, readJsonResponse, readRequestSignal } from "./request";
 import { parsePlanModeReply, type PlanModeState } from "./plan-state";
 /**
  * Typed daemon API client — dependency-free, framework-free.
@@ -531,7 +531,7 @@ export class DaemonApi {
       "/api/rpc",
       {
         method: "POST",
-        ...(command.startsWith("get_") ? { signal: readRequestSignal(signal) } : {}),
+        ...(command.startsWith("get_") ? { signal: readRequestSignal(signal, command === "get_available_models" ? CATALOGUE_READ_TIMEOUT_MS : undefined) } : {}),
         body: JSON.stringify(body),
       },
     );
