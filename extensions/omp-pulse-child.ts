@@ -143,6 +143,7 @@ type TreeResult = {
 /** The AgentSession surface this file uses. All of it is internal. */
 type LiveSession = QueueOwner & {
   isStreaming?: boolean;
+  waitForSessionTransition?: () => Promise<void>;
   queuedMessageCount?: number;
   subscribe?: (listener: (event: { type: string }) => void) => () => void;
   newSession?: (options?: { parentSession?: string; sessionDir?: string }) => Promise<boolean>;
@@ -814,9 +815,20 @@ export default function ompPulseChild(pi: ExtensionAPI): void {
     freshAfterTurn = undefined;
     try {
       const session = liveSession(ctx);
-      publishModelState(ctx, session);
-      unsubscribeQueue?.();
       const generation = lifecycle;
+      // omp awaits session_switch hooks *before* restoring the destination's
+      // thinking selector. Wait outside the hook: awaiting here would deadlock
+      // the switch, and reading here cached the departing default (often Medium).
+      if (session.waitForSessionTransition) {
+        void session.waitForSessionTransition().then(() => {
+          if (generation === lifecycle) publishModelState(ctx, session);
+        }).catch((error: unknown) => {
+          if (generation === lifecycle) ctx.ui.notify(`Could not read restored thinking level: ${String(error)}`, "warning");
+        });
+      } else {
+        publishModelState(ctx, session);
+      }
+      unsubscribeQueue?.();
       unsubscribeQueue = session.subscribe?.(event => {
         if (event.type === "queue_update" && generation === lifecycle) publishQueueState(ctx, session);
       });

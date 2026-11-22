@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import install from '../omp-pulse-child.ts';
 
-function fixture() {
+function fixture(sessionMethods = {}) {
   const handlers = new Map();
   const receipts = [];
   const entries = [];
   let branch = entries;
   let configured = 'auto';
-  const session = { configuredThinkingLevel: () => configured };
+  const session = { configuredThinkingLevel: () => configured, ...sessionMethods };
   install({
     pi: { AgentRegistry: { global: () => ({ get: () => ({ session }) }) } },
     on(name, handler) { handlers.set(name, handler); },
@@ -41,6 +41,32 @@ test('cold start and navigation publish the actual configured selector, not effe
   f.setConfigured(undefined);
   await f.event('session_tree');
   assert.deepEqual(f.receipts.at(-1), { key: 'omp-pulse-thinking', data: { configuredThinkingLevel: '', modelFallback: null } });
+});
+
+test('resume publishes the restored selector, not the one active while omp awaits the hook', async () => {
+  const switched = Promise.withResolvers();
+  const f = fixture({ waitForSessionTransition: () => switched.promise });
+  f.setConfigured('medium');
+  await f.event('session_switch');
+  assert.deepEqual(f.receipts, []);
+  f.setConfigured('high');
+  switched.resolve();
+  await switched.promise;
+  assert.equal(f.receipts.at(-1)?.data.configuredThinkingLevel, 'high');
+});
+
+test('a superseded resume cannot publish after the next session takes over', async () => {
+  const first = Promise.withResolvers(), second = Promise.withResolvers();
+  const transitions = [first, second];
+  const f = fixture({ waitForSessionTransition: () => transitions.shift().promise });
+  await f.event('session_switch');
+  await f.event('session_switch');
+  second.resolve();
+  await second.promise;
+  f.setConfigured('medium');
+  first.resolve();
+  await first.promise;
+  assert.deepEqual(f.receipts.map(r => r.data.configuredThinkingLevel), ['auto']);
 });
 
 test('child owner journals the native fallback reason without inventing restoration', async () => {
