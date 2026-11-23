@@ -73,15 +73,16 @@ function ExpandedChunks({ output, wrap, links }: { output: BashOutput; wrap: boo
 }
 
 /** A 32px row above a block: state on the left, Wrap and Copy on the right. One per block. */
-export function DetailToolbar({ children, wrap, onWrap, copyText, copyLabel }: {
+export function DetailToolbar({ children, wrap, onWrap, copyText, copyLabel, className }: {
   children?: ReactNode;
   wrap?: boolean;
   onWrap?: () => void;
   copyText?: string;
   copyLabel?: string;
+  className?: string;
 }) {
   return (
-    <div className="flex min-h-8 min-w-0 items-center gap-2 text-meta text-muted-foreground">
+    <div className={cn("flex min-h-9 min-w-0 items-center gap-2 text-meta text-muted-foreground", className)}>
       <div className="flex min-w-0 flex-1 items-center gap-2">{children}</div>
       {onWrap ? (
         <Button
@@ -141,29 +142,44 @@ export function OutputBlock({
   const chunked = showAll && needsClamp && output.text.length > EXPANDED_CHUNK * 2;
   const errorEnd = failed ? (output.text.indexOf("\n") + 1 || output.text.length) : 0;
   const hiddenLines = needsClamp && !showAll ? output.text.slice(clamped.length).split("\n").length - 1 : 0;
+  const hasContent = Boolean(text || command);
   return (
-    <div className="flex min-w-0 flex-col" data-testid="tool-output">
-      <DetailToolbar wrap={wrap} onWrap={text || command ? () => setWrap((value) => !value) : undefined} copyText={text || command} copyLabel={text ? copyLabel : "Copy command"}>
+    <div
+      className={cn(
+        "flex min-w-0 flex-col overflow-hidden rounded-lg border bg-surface-1",
+        failed ? "border-danger/35" : "border-hairline",
+      )}
+      data-testid="tool-output"
+    >
+      <DetailToolbar
+        wrap={wrap}
+        onWrap={hasContent ? () => setWrap((value) => !value) : undefined}
+        copyText={text || command}
+        copyLabel={text ? copyLabel : "Copy command"}
+        className={cn(
+          "bg-surface-2 px-3 py-1",
+          hasContent && "border-b border-hairline",
+        )}
+      >
         {status}
         {actions ? <span className="ml-auto flex items-center gap-1">{actions}</span> : null}
       </DetailToolbar>
       {/* Nothing to read (an empty output): the toolbar alone carries the status. */}
-      {!text && !command ? null : (
+      {!hasContent ? null : (
         <div
           ref={well}
           role="region"
           aria-label="Output"
           tabIndex={0}
           className={cn(
-            "min-w-0 max-w-full rounded-lg p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            "bg-surface-1",
+            "min-w-0 max-w-full rounded-lg bg-surface-1 p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring",
             !wrap && "overflow-x-auto [overscroll-behavior-x:contain]",
             // A line running past the right edge fades out there, so the clip reads as "scroll for more".
             clipped && "[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]",
           )}
         >
           {command ? (
-            <pre className={cn("m-0 font-mono text-code text-foreground", wrap ? "whitespace-pre-wrap break-all" : "min-w-max whitespace-pre", text && "pb-2")} data-testid="tool-command">
+            <pre className={cn("m-0 font-mono text-code text-foreground", wrap ? "whitespace-pre-wrap break-all" : "min-w-max whitespace-pre", text && "mb-2.5 border-b border-hairline pb-2.5")} data-testid="tool-command">
               <span aria-hidden className="select-none text-tertiary">$ </span>
               {command}
             </pre>
@@ -181,13 +197,15 @@ export function OutputBlock({
         </div>
       )}
       {needsClamp ? (
-        <button
-          type="button"
-          className={SHOW_ALL}
-          onClick={() => setShowAll((value) => !value)}
-        >
-          {showAll ? "Show less" : `Show all (${hiddenLines > 0 ? `${hiddenLines.toLocaleString()} more ${hiddenLines === 1 ? "line" : "lines"}` : `${(output.text.length - clamped.length).toLocaleString()} more characters`})`}
-        </button>
+        <div className="border-t border-hairline bg-surface-1 px-3 py-1">
+          <button
+            type="button"
+            className={cn(SHOW_ALL, "mt-0")}
+            onClick={() => setShowAll((value) => !value)}
+          >
+            {showAll ? "Show less" : `Show all (${hiddenLines > 0 ? `${hiddenLines.toLocaleString()} more ${hiddenLines === 1 ? "line" : "lines"}` : `${(output.text.length - clamped.length).toLocaleString()} more characters`})`}
+          </button>
+        </div>
       ) : null}
     </div>
   );
@@ -216,24 +234,24 @@ export function ArgsDetails({ args, omit = [] }: { args: unknown; omit?: readonl
   if (entries.length === 0) return null;
   return (
     <div className="min-w-0" data-testid="tool-args">
-      <RowGroup>
+      <RowGroup inset="sheet">
         <Row
           title="Details"
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
           trailing={<ChevronDownIcon aria-hidden className={cn("size-4 transition-transform duration-[var(--dur-base)] motion-reduce:transition-none", open && "rotate-180")} />}
         />
+        {open ? (
+          <dl className="disclosure flex min-w-0 flex-col gap-3 border-t border-hairline px-4 py-3">
+            {entries.map(([key, value]) => (
+              <div key={key} className="min-w-0">
+                <dt className="text-meta text-muted-foreground">{key}</dt>
+                <dd className="m-0 whitespace-pre-wrap break-words font-mono text-code text-foreground [overflow-wrap:anywhere]">{argValue(value)}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
       </RowGroup>
-      {open ? (
-        <dl className="disclosure flex min-w-0 flex-col gap-3 pb-2 pt-1">
-          {entries.map(([key, value]) => (
-            <div key={key} className="min-w-0">
-              <dt className="text-meta text-muted-foreground">{key}</dt>
-              <dd className="m-0 whitespace-pre-wrap break-words font-mono text-code text-foreground [overflow-wrap:anywhere]">{argValue(value)}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : null}
     </div>
   );
 }

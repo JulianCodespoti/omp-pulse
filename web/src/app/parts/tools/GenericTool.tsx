@@ -19,9 +19,15 @@ function TaskDetail({ part }: { part: ToolUiPart }) {
   return (
     <>
       {tasks.length ? (
-        <RowGroup>
+        <RowGroup inset="sheet">
           {tasks.map((task, index) => (
-            <Row key={index} leading={<BotIcon aria-hidden />} title={task.description || "Task"} subtitle={task.agent || undefined} testId="delegated-task" />
+            <Row
+              key={index}
+              leading={<BotIcon aria-hidden />}
+              title={task.description || "Task"}
+              subtitle={task.agent || undefined}
+              testId="delegated-task"
+            />
           ))}
         </RowGroup>
       ) : null}
