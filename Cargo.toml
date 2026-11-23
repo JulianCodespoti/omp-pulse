@@ -1,6 +1,6 @@
 [package]
 name = "omp-pulse"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # The newest rust-version among locked dependencies (sysinfo). CI's msrv job
 # builds on exactly this toolchain, so raise it when a dependency does.
