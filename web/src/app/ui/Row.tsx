@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils";
 type RowOwnProps = {
   /** 20px slot; an icon or a status glyph. Icons are sized to 20 here. */
   leading?: ReactNode;
-  /** `tile`: a 36px leading tile (agent rows), centred on the row. */
-  leadingSize?: "icon" | "tile";
+  /** `tile`: 36px leading tile (agent/provider rows); `sm-tile`: 32px tile (sheet rows). */
+  leadingSize?: "icon" | "tile" | "sm-tile";
   title: ReactNode;
   subtitle?: ReactNode;
   /** Value text or a control (switch, select, button). */
@@ -21,6 +21,36 @@ type RowOwnProps = {
   className?: string;
   testId?: string;
 };
+
+/**
+ * Rounded leading icon/logo container used inside bordered cards so provider
+ * marks, command icons, and action glyphs sit in a crisp framed badge.
+ */
+export function RowTile({
+  size = "sm",
+  tone = "sheet",
+  className,
+  children,
+}: {
+  size?: "sm" | "md";
+  /** `sheet` sits inside a surface-2 card; `page` sits inside a surface-1 card. */
+  tone?: "sheet" | "page";
+  className?: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-md border border-hairline",
+        size === "md" ? "size-9" : "size-8 [&_svg:not([class*='size-'])]:size-4",
+        tone === "page" ? "bg-surface-2" : "bg-surface-3/70",
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
+}
 
 // Everything else an element accepts (aria-*, data-*, pointer handlers for
 // long-press rows) passes through to the row element.
@@ -64,7 +94,9 @@ export function Row({
             "flex shrink-0 items-center justify-center",
             leadingSize === "tile"
               ? "size-9 self-center"
-              : cn("size-5 [&_svg:not([class*='size-'])]:size-5", subtitle ? "mt-2.5 self-start" : "self-center"),
+              : leadingSize === "sm-tile"
+                ? "size-8 self-center"
+                : cn("size-5 [&_svg:not([class*='size-'])]:size-5", subtitle ? "mt-2.5 self-start" : "self-center"),
             destructive ? "text-danger" : "text-muted-foreground",
           )}
         >
@@ -149,11 +181,12 @@ export function Row({
  * A titled run of rows. Flat by default: the group bleeds out of the 16px
  * content gutter it sits in (sheet body, screen content) so the press fill
  * reaches both edges while titles and row text stay on the gutter line.
- * `inset` instead draws it as one rounded surface-1 card, for groups that sit
- * on the page background rather than a sheet.
+ * `inset` draws a rounded bordered card: `true` uses surface-1 (for groups on
+ * the page background), `"sheet"` uses surface-2 (for elevated cards inside a
+ * surface-1 BottomSheet).
  *
- * Hairlines separate rows only (no top/bottom rule: no boxes inside boxes).
- * A child that is not a Row gets a full-width hairline instead.
+ * Hairlines separate rows only (no inner top/bottom rule). A child that is not
+ * a Row gets a full-width hairline instead.
  */
 export function RowGroup({
   title,
@@ -167,12 +200,13 @@ export function RowGroup({
 }: {
   title?: ReactNode;
   footer?: ReactNode;
-  inset?: boolean;
+  inset?: boolean | "sheet";
   headingId?: string;
   children: ReactNode;
   className?: string;
   testId?: string;
 } & Omit<JSX.IntrinsicElements["section"], "title" | "children">): JSX.Element {
+  const isCard = inset === true || inset === "sheet";
   return (
     <section
       data-slot="row-group"
@@ -183,13 +217,19 @@ export function RowGroup({
       // first layout, so the scrollbar is right once a group has been seen.
       className={cn(
         "flex min-w-0 flex-col [content-visibility:auto] [contain-intrinsic-size:auto_240px]",
-        inset ? "mx-0" : "-mx-4",
+        isCard ? "mx-0" : "-mx-4",
         className,
       )}
       {...rest}
     >
       {title ? (
-        <h2 id={headingId} className="px-4 pb-1.5 text-meta font-medium text-muted-foreground">
+        <h2
+          id={headingId}
+          className={cn(
+            "pb-1.5 text-meta font-medium text-muted-foreground",
+            isCard ? "px-1" : "px-4",
+          )}
+        >
           {title}
         </h2>
       ) : null}
@@ -199,13 +239,14 @@ export function RowGroup({
           "flex min-w-0 flex-col",
           "[&>[data-slot=row]:not(:last-child)>[data-slot=row-body]]:border-b",
           "[&>:not([data-slot=row]):not(:last-child)]:border-b [&>:not([data-slot=row])]:border-hairline",
-          inset && "overflow-hidden rounded-lg bg-surface-1",
+          inset === true && "overflow-hidden rounded-lg border border-hairline bg-surface-1",
+          inset === "sheet" && "overflow-hidden rounded-lg border border-hairline bg-surface-2",
         )}
       >
         {children}
       </div>
       {footer ? (
-        <div className="px-4 pt-1.5 text-meta text-muted-foreground">{footer}</div>
+        <div className={cn("pt-1.5 text-meta text-muted-foreground", isCard ? "px-1" : "px-4")}>{footer}</div>
       ) : null}
     </section>
   );

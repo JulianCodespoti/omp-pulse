@@ -454,7 +454,7 @@ export function ChangesTab({ sessionPath, active }: { sessionPath: string; activ
         <div key={load.state === "loading" ? "loading" : "ready"} className="px-4 pb-6 pt-3 motion-safe:animate-fade-in">
           {ready ? null : <div className="mb-3 flex items-center justify-end gap-1">{toolbar}</div>}
           {ready ? (
-            <div data-testid="changes-summary" className="mb-3 flex flex-col gap-2.5 rounded-xl bg-surface-1 p-4">
+            <div data-testid="changes-summary" className="mb-3 flex flex-col gap-2.5 rounded-lg border border-hairline bg-surface-1 p-4">
               <div className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 truncate text-title font-semibold text-foreground">
                   {ready.files.length === 0 ? "No changes" : ready.files.length === 1 ? "1 file" : `${ready.files.length} files`}

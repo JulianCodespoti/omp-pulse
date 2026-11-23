@@ -3,7 +3,7 @@ import { Minimize2Icon, SettingsIcon, SparklesIcon } from "lucide-react";
 
 import { Notice } from "@/app/ui/Notice";
 import { EmptyState } from "@/app/ui/EmptyState";
-import { Row, RowGroup } from "@/app/ui/Row";
+import { Row, RowGroup, RowTile } from "@/app/ui/Row";
 import { Segmented } from "@/app/ui/Segmented";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -15,12 +15,14 @@ import { compactionPending, getCompactionOperation, useFreshCompactionState } fr
 import { BottomSheet, SheetLoading } from "@/app/ui/Sheet";
 import { humanizeDaemonError } from "@/app/ui/OwnedBySession";
 import { errorRecoveryAction, type RecoveryAction } from "@/app/ui/error-recovery";
-import { ContextRing } from "@/app/ui/ContextRing";
-import { formatTokens } from "@/app/ui/ContextMeter";
+import { formatTokens, MeterBlock } from "@/app/ui/ContextMeter";
+import { ProviderLogo } from "@/app/ui/ProviderLogo";
+import { providerLabel } from "@/app/sessions/ModelPicker";
 import { shortModel } from "@/app/session-format";
 import { openSwitcher } from "@/app/nav/panels";
 import { showToast } from "@/app/Notices";
 import { hasNativeNotificationControls, readNativeChatNotifications, writeNativeChatNotifications } from "@/platform/native-notifications";
+import { cn } from "@/lib/utils";
 
 type Option = { value: string; label: string };
 // omp's steering and follow-up queues both drain these two ways.
@@ -48,17 +50,17 @@ type ChoiceFieldProps = {
   readOnly: boolean;
 };
 
-/** A setting with a few named values: an inline Segmented under its label, as in Appearance. */
+/** A setting with a few named values: a compact card-nested Segmented under its label. */
 function ChoiceField({ testId, label, help, options, value, onChange, disabled, readOnly }: ChoiceFieldProps) {
   const known = options.some((option) => option.value === value);
   const locked = disabled || readOnly || !known;
   return (
-    <div className="flex min-w-0 flex-col gap-2 px-4 py-3">
-      <span className="text-ui text-foreground">{label}</span>
+    <div className="flex min-w-0 flex-col gap-2.5 px-4 py-3.5">
+      <span className="text-ui font-medium text-foreground">{label}</span>
       <Segmented
         aria-label={label}
         testId={testId}
-        className="bg-background"
+        variant="card"
         options={options.map((option) => ({ ...option, disabled: locked }))}
         value={value ?? ""}
         onChange={onChange}
@@ -361,8 +363,24 @@ export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project,
         onChange: (v) => void mutate("interrupt", () => api().setInterruptMode(sessionPath!, v as "immediate" | "wait")),
       },
     ];
+    const activeModel = sessionModelHint?.model || model.model;
+    const activeProvider = sessionModelHint?.provider || model.provider;
+    const contextRounded = contextPercent !== null ? Math.round(Math.min(100, Math.max(0, contextPercent))) : 0;
+    const contextUsed = formatTokens(context?.tokens);
+    const contextWindow = formatTokens(context?.contextWindow);
+    const contextDetail = contextUsed && contextWindow
+      ? `${contextUsed} / ${contextWindow} · ${contextRounded}%`
+      : `${contextRounded}%`;
+    const contextStatus = contextPercent === null
+      ? null
+      : contextPercent >= 90
+        ? { label: "Nearly full", tone: "bg-danger-tint text-danger", dot: "bg-danger" }
+        : contextPercent >= 70
+          ? { label: "Filling up", tone: "bg-warning-tint text-warning", dot: "bg-warning" }
+          : { label: "Healthy", tone: "border border-hairline bg-surface-1 text-foreground", dot: "bg-primary" };
+
     body = (
-      <div className="space-y-4">
+      <div className="space-y-5">
         {ownershipInfo ? (
           <Notice tone="warning" action={onNeedCollab ? { label: "Connect with /collab", onClick: onNeedCollab } : leaving(errorRecoveryAction(ownershipInfo))}>{ownershipInfo}</Notice>
         ) : null}
@@ -379,59 +397,87 @@ export function SessionSettingsSheet({ open, onOpenChange, sessionPath, project,
           </Notice>
         ) : null}
 
-        <RowGroup title="Model & thinking">
+        <RowGroup inset="sheet" title="Model & thinking">
           <Row
             testId="settings-model"
-            leading={<SparklesIcon />}
-            title={shortModel(sessionModelHint?.model || model.model) || "Model not reported"}
-            subtitle={[sessionModelHint?.provider || model.provider, thinking ? `Thinking ${thinking}` : ""].filter(Boolean).join(" · ") || undefined}
+            leadingSize="tile"
+            leading={
+              <RowTile size="md">
+                {activeModel || activeProvider ? (
+                  <ProviderLogo model={activeModel} provider={activeProvider} className="size-5" />
+                ) : (
+                  <SparklesIcon aria-hidden className="size-4 text-primary-text" />
+                )}
+              </RowTile>
+            }
+            title={<span className="font-medium">{shortModel(activeModel) || "Model not reported"}</span>}
+            subtitle={activeProvider ? providerLabel(activeProvider) : undefined}
+            trailing={
+              thinking ? (
+                <span className="rounded-full border border-hairline bg-surface-3/80 px-2.5 py-0.5 font-mono text-code text-foreground">
+                  Thinking {thinking}
+                </span>
+              ) : undefined
+            }
             chevron={Boolean(onOpenModelPicker)}
             onClick={onOpenModelPicker ? () => { onOpenChange(false); onOpenModelPicker(); } : undefined}
           />
         </RowGroup>
 
-        <RowGroup title="Context" footer="Compacting summarises older messages to free up space.">
+        <RowGroup inset="sheet" title="Context" footer="Compacting summarises older messages to free up space.">
           {contextPercent !== null ? (
-            <div className="flex items-center gap-4 px-4 py-3" data-testid="settings-context">
-              <ContextRing percent={contextPercent} />
-              <span className="flex min-w-0 flex-col">
-                <span className="text-ui font-medium text-foreground">
-                  {contextPercent >= 90 ? "Nearly full" : contextPercent >= 70 ? "Filling up" : "Plenty of room"}
+            <MeterBlock
+              label={
+                <span className="inline-flex items-center gap-2">
+                  <span>Context</span>
+                  {contextStatus ? (
+                    <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-code font-medium", contextStatus.tone)}>
+                      <span aria-hidden className={cn("size-1.5 rounded-full", contextStatus.dot)} />
+                      {contextStatus.label}
+                    </span>
+                  ) : null}
                 </span>
-                <span className="text-meta tabular-nums text-muted-foreground">
-                  {context?.tokens !== undefined && context.contextWindow
-                    ? `${formatTokens(context.tokens)} of ${formatTokens(context.contextWindow)} tokens`
-                    : "Of the model’s context window"}
-                </span>
-              </span>
-            </div>
+              }
+              detail={contextDetail}
+              percent={contextPercent}
+              ariaLabel={`Context ${contextRounded}% used`}
+              testId="settings-context"
+              className="px-4 py-3.5"
+            />
           ) : (
-            <p className="px-4 py-3 text-meta text-muted-foreground" data-testid="settings-context">Context use isn’t reported yet.</p>
+            <p className="px-4 py-3.5 text-meta text-muted-foreground" data-testid="settings-context">Context use isn’t reported yet.</p>
           )}
           {/* Confirmed in place: a sheet over this sheet is the stacking the design rules forbid. */}
           {compactConfirm ? (
-            <div className="flex flex-col gap-3 px-4 py-3" data-testid="settings-compact-confirm">
+            <div className="flex flex-col gap-3 bg-surface-3/30 px-4 py-3.5" data-testid="settings-compact-confirm">
               <span className="flex flex-col gap-0.5">
-                <span className="text-ui text-foreground">Compact this chat?</span>
+                <span className="text-ui font-medium text-foreground">Compact this chat?</span>
                 <span className="text-meta text-muted-foreground">Older messages become a summary. This can’t be undone.</span>
               </span>
               <span className="flex gap-2">
-                <Button variant="secondary" className="min-h-11 flex-1" onClick={() => setCompactConfirm(false)} disabled={compactBusy}>Cancel</Button>
-                <Button variant="danger" className="min-h-11 flex-1" onClick={() => void handleCompact()} disabled={busy}>Compact</Button>
+                <Button variant="secondary" className="min-h-11 flex-1 rounded-md" onClick={() => setCompactConfirm(false)} disabled={compactBusy}>Cancel</Button>
+                <Button variant="danger" className="min-h-11 flex-1 rounded-md" onClick={() => void handleCompact()} disabled={busy}>Compact</Button>
               </span>
             </div>
           ) : (
-            <Row leading={<Minimize2Icon />} title="Compact now" onClick={() => setCompactConfirm(true)} disabled={busy} />
+            <Row
+              leadingSize="sm-tile"
+              leading={<RowTile><Minimize2Icon aria-hidden /></RowTile>}
+              title="Compact now"
+              chevron
+              onClick={() => setCompactConfirm(true)}
+              disabled={busy}
+            />
           )}
         </RowGroup>
 
-        <RowGroup title="Messages" footer={readOnly ? "These are set on your computer." : undefined}>
+        <RowGroup inset="sheet" title="Messages" footer={readOnly ? "These are set on your computer." : undefined}>
           {messageChoices.map((choice) => (
             <ChoiceField key={choice.testId} {...choice} disabled={busy} readOnly={readOnly} />
           ))}
         </RowGroup>
 
-        <RowGroup title="Behaviour">
+        <RowGroup inset="sheet" title="Behaviour">
           {onSetPlanMode ? (
             <SwitchRow id="plan-mode" label="Plan mode" help="Plan first; nothing changes until you approve">
               <Switch

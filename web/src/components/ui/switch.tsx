@@ -21,17 +21,16 @@ function Switch({
     <SwitchPrimitive.Root
       data-slot="switch"
       className={cn(
-        "peer group/switch relative inline-flex shrink-0 items-center rounded-full border border-transparent transition-[background-color,border-color,box-shadow] duration-[var(--dur-control)] ease-[var(--ease-control)] outline-none group-has-[:focus-visible]/field-label:border-transparent group-has-[:focus-visible]/field-label:ring-0 after:absolute after:-inset-x-3 after:-inset-y-[13px] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-danger aria-invalid:ring-3 aria-invalid:ring-danger/20 data-[size=default]:h-[18.4px] data-[size=default]:w-[32px] data-[size=sm]:h-[14px] data-[size=sm]:w-[24px] dark:aria-invalid:border-danger/50 dark:aria-invalid:ring-danger/40 data-checked:bg-[var(--switch-on)] data-unchecked:bg-control dark:data-unchecked:bg-control/80 data-disabled:cursor-not-allowed data-disabled:opacity-50",
+        "peer group/switch relative inline-flex h-[32px] w-[52px] shrink-0 items-center rounded-full border-2 border-transparent transition-[background-color,border-color,box-shadow] duration-[var(--dur-control)] ease-[var(--ease-control)] outline-none group-has-[:focus-visible]/field-label:border-transparent group-has-[:focus-visible]/field-label:ring-0 after:absolute after:-inset-x-1 after:-inset-y-[8px] focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-danger aria-invalid:ring-3 aria-invalid:ring-danger/20 dark:aria-invalid:border-danger/50 dark:aria-invalid:ring-danger/40 data-checked:bg-[var(--switch-on)] data-unchecked:border-control data-unchecked:bg-surface-1 data-disabled:cursor-not-allowed data-disabled:opacity-50",
         className
       )}
       {...props}
     >
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
-        // One 24px box in both states: the thumb slides 16px and shrinks to
-        // two thirds by transform, so the Material growth reads the same without
-        // animating margin and box size (layout) on every toggle.
-        className="pointer-events-none block size-[24px] shrink-0 rounded-full transition-[translate,scale,background-color] duration-[var(--dur-control)] ease-[var(--ease-position)] ms-[6px] scale-[0.667] data-unchecked:bg-muted-foreground data-checked:translate-x-[16px] data-checked:scale-100 data-checked:bg-[var(--switch-thumb-on)] motion-reduce:transition-none"
+        // One 24px box in both states inside the 52×32px (48×28 inner) track:
+        // off sits 8px inset at 16px (scale 0.667), on slides 20px to 4px inset at 24px.
+        className="pointer-events-none block size-[24px] shrink-0 rounded-full transition-[translate,scale,background-color] duration-[var(--dur-control)] ease-[var(--ease-position)] ms-[2px] scale-[0.667] data-unchecked:bg-muted-foreground data-checked:translate-x-[20px] data-checked:scale-100 data-checked:bg-[var(--switch-thumb-on)] motion-reduce:transition-none"
       />
     </SwitchPrimitive.Root>
   )

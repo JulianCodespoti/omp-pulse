@@ -33,7 +33,7 @@ import {
 } from "../session-format";
 import { BottomSheet, SheetFooter } from "../ui/Sheet";
 import { Notice } from "../ui/Notice";
-import { Row, RowGroup } from "../ui/Row";
+import { Row, RowGroup, RowTile } from "../ui/Row";
 import { humanizeDaemonError } from "../ui/OwnedBySession";
 import { errorRecoveryAction } from "../ui/error-recovery";
 import { CloseOnLaptopDialog } from "../CloseOnLaptopDialog";
@@ -361,13 +361,15 @@ export function SessionActionsSheet({
         ) : (
           <div className="flex flex-col gap-4">
             {/* Same words and relative order as the chat's ⋯ menu and the drawer's row menu; Pin, Duplicate and Stop exist only where a list row is. */}
-            <RowGroup>
+            <RowGroup inset="sheet">
               <Row
                 testId="action-change-model"
                 onClick={() => { clearCopy(); setModelPickerOpen(true); }}
                 disabled={busy}
-                leading={<SparklesIcon />}
+                leadingSize="sm-tile"
+                leading={<RowTile><SparklesIcon aria-hidden /></RowTile>}
                 title="Model & thinking"
+                chevron
               />
               <Row
                 testId="action-rename"
@@ -378,21 +380,24 @@ export function SessionActionsSheet({
                   setRenaming(true);
                 }}
                 disabled={busy}
-                leading={<PencilIcon />}
+                leadingSize="sm-tile"
+                leading={<RowTile><PencilIcon aria-hidden /></RowTile>}
                 title="Rename"
               />
               <Row
                 testId="action-pin"
                 onClick={handlePinToggle}
                 disabled={busy}
-                leading={session && isPinned(session.path) ? <PinOffIcon /> : <PinIcon />}
+                leadingSize="sm-tile"
+                leading={<RowTile>{session && isPinned(session.path) ? <PinOffIcon aria-hidden /> : <PinIcon aria-hidden />}</RowTile>}
                 title={session && isPinned(session.path) ? "Unpin" : "Pin"}
               />
               <Row
                 testId="action-duplicate"
                 onClick={() => void handleDuplicate()}
                 disabled={busy}
-                leading={<CopyPlusIcon />}
+                leadingSize="sm-tile"
+                leading={<RowTile><CopyPlusIcon aria-hidden /></RowTile>}
                 title={duplicating ? "Duplicating…" : "Duplicate"}
               />
               {session && !isOnLaptop(session) && !isPhoneMode() ? (
@@ -400,7 +405,8 @@ export function SessionActionsSheet({
                   testId="action-open-on-computer"
                   onClick={() => void handleOpenOnComputer()}
                   disabled={busy || working}
-                  leading={<MonitorIcon />}
+                  leadingSize="sm-tile"
+                  leading={<RowTile><MonitorIcon aria-hidden /></RowTile>}
                   title={openingOnComputer ? "Opening on computer…" : "Open on computer"}
                   subtitle={working ? "Available when the reply finishes" : undefined}
                 />
@@ -410,7 +416,8 @@ export function SessionActionsSheet({
                   testId="action-close-on-computer"
                   onClick={() => { clearCopy(); setCloseOnComputerOpen(true); }}
                   disabled={busy}
-                  leading={<MonitorOffIcon />}
+                  leadingSize="sm-tile"
+                  leading={<RowTile><MonitorOffIcon aria-hidden /></RowTile>}
                   title="Close on computer"
                   subtitle="Only when idle. History is kept."
                 />
@@ -419,7 +426,8 @@ export function SessionActionsSheet({
                 testId="action-copy-path"
                 disabled={busy}
                 onClick={() => void handleCopyPath()}
-                leading={<CopyIcon />}
+                leadingSize="sm-tile"
+                leading={<RowTile><CopyIcon aria-hidden /></RowTile>}
                 title="Copy path"
               />
               {working && stop ? (
@@ -427,7 +435,8 @@ export function SessionActionsSheet({
                   testId="action-stop"
                   onClick={() => void handleStop()}
                   disabled={busy || stop.capability === false}
-                  leading={<SquareIcon />}
+                  leadingSize="sm-tile"
+                  leading={<RowTile><SquareIcon aria-hidden /></RowTile>}
                   title={stopping ? "Stopping…" : "Stop"}
                   subtitle={stop.capability === false ? "Can’t be stopped from here" : undefined}
                 />
@@ -436,13 +445,14 @@ export function SessionActionsSheet({
             <PluginMenuItems variant="sheet" views={pluginMenu.views} onAction={pluginMenu.onAction} onClose={closeSheet} />
             {/* Destructive last; the computer may still refuse, and the row then returns. */}
             {session && !isOnLaptop(session) ? (
-              <RowGroup>
+              <RowGroup inset="sheet">
                 <Row
                   testId="action-delete"
                   onClick={() => { deleteSessionWithUndo({ path: session.path, title: sessionTitle(session) }, onChanged); closeSheet(); }}
                   disabled={busy || working}
                   destructive
-                  leading={<Trash2Icon />}
+                  leadingSize="sm-tile"
+                  leading={<RowTile className="border-danger/25 bg-danger-tint text-danger"><Trash2Icon aria-hidden /></RowTile>}
                   title="Delete"
                   subtitle={working ? "Available when the reply finishes" : undefined}
                 />

@@ -16,7 +16,7 @@ import { EmptyState } from "./ui/EmptyState";
 import { Notice } from "./ui/Notice";
 import { humanizeDaemonError } from "./ui/OwnedBySession";
 import { ProviderLogo } from "./ui/ProviderLogo";
-import { Row, RowGroup, RowSkeleton } from "./ui/Row";
+import { Row, RowGroup, RowSkeleton, RowTile } from "./ui/Row";
 import { BottomSheet, SheetSearch } from "./ui/Sheet";
 
 /** How often a running sign-in is asked for its output. */
@@ -426,7 +426,8 @@ export function ProviderSignIn({
   const addRow = (
     <RowGroup inset>
       <Row
-        leading={<PlusIcon aria-hidden />}
+        leadingSize="tile"
+        leading={<RowTile size="md" tone="page"><PlusIcon aria-hidden className="size-4.5" /></RowTile>}
         title="Add a provider"
         chevron
         disabled={starting !== null || !listed || listed.providers.length === 0}
@@ -484,9 +485,14 @@ export function ProviderSignIn({
                 <Row
                   key={p.id}
                   testId="provider-signed-in-row"
-                  leading={<ProviderLogo provider={p.id} className="size-5" />}
-                  title={p.label}
-                  trailing={<CheckIcon aria-label="Signed in" className="size-5 text-foreground" />}
+                  leadingSize="tile"
+                  leading={<RowTile size="md" tone="page"><ProviderLogo provider={p.id} className="size-5" /></RowTile>}
+                  title={<span className="font-medium">{p.label}</span>}
+                  trailing={
+                    <span className="flex size-6 items-center justify-center rounded-full bg-success-tint text-success">
+                      <CheckIcon aria-label="Signed in" className="size-3.5" />
+                    </span>
+                  }
                 />
               ))}
             </RowGroup>
@@ -559,10 +565,17 @@ function AddProviderSheet({
     <Row
       key={id}
       testId={`provider-${id}`}
-      leading={<ProviderLogo provider={id} className="size-5" />}
+      leadingSize="tile"
+      leading={<RowTile size="md"><ProviderLogo provider={id} className="size-5" /></RowTile>}
       title={label}
       subtitle={detail}
-      trailing={signedIds.has(id) ? <CheckIcon aria-label="Signed in" className="size-5 text-foreground" /> : undefined}
+      trailing={
+        signedIds.has(id) ? (
+          <span className="flex size-6 items-center justify-center rounded-full bg-success-tint text-success">
+            <CheckIcon aria-label="Signed in" className="size-3.5" />
+          </span>
+        ) : undefined
+      }
       onClick={() => onPick(id)}
     />
   );
@@ -579,9 +592,9 @@ function AddProviderSheet({
       }
     >
       <div className="space-y-4">
-        {featured.length > 0 ? <RowGroup title="Popular">{featured.map((f) => row(f.id, f.label, f.detail))}</RowGroup> : null}
+        {featured.length > 0 ? <RowGroup inset="sheet" title="Popular">{featured.map((f) => row(f.id, f.label, f.detail))}</RowGroup> : null}
         {others.length > 0 ? (
-          <RowGroup title={featured.length > 0 ? "More providers" : undefined}>{others.map((p) => row(p.id, p.label))}</RowGroup>
+          <RowGroup inset="sheet" title={featured.length > 0 ? "More providers" : undefined}>{others.map((p) => row(p.id, p.label))}</RowGroup>
         ) : null}
         {featured.length === 0 && others.length === 0 ? (
           <Notice tone="info" icon={SearchIcon} action={{ label: "Clear search", onClick: () => setQuery("") }}>

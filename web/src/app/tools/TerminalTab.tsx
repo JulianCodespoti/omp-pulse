@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from "react";
-import { ArrowUpIcon, HistoryIcon, SquareIcon, SquareTerminalIcon } from "lucide-react";
+import { ArrowUpIcon, CheckCircle2Icon, HistoryIcon, SquareIcon, SquareTerminalIcon } from "lucide-react";
 
 import { Chip } from "@/app/ui/Chip";
 import { EmptyState } from "@/app/ui/EmptyState";
 import { Notice } from "@/app/ui/Notice";
 import { humanizeDaemonError } from "@/app/ui/OwnedBySession";
 import { errorRecoveryAction } from "@/app/ui/error-recovery";
-import { Row, RowGroup } from "@/app/ui/Row";
+import { Row, RowGroup, RowTile } from "@/app/ui/Row";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -303,17 +303,23 @@ export function TerminalTab({ sessionPath, active }: { sessionPath: string; acti
             </p>
           ) : null}
           {running && live ? (
-            <pre
-              ref={liveView}
-              onScroll={(e) => {
-                const el = e.currentTarget;
-                liveFollow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-              }}
-              className="max-h-[50dvh] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface-1 p-3 font-mono text-code text-foreground"
-              data-testid="bash-live"
-            >
-              {live}
-            </pre>
+            <section className="overflow-hidden rounded-lg border border-hairline bg-surface-1">
+              <div className="flex min-w-0 items-center justify-between gap-2 border-b border-hairline bg-surface-2 px-3 py-2 font-mono text-code">
+                <span className="min-w-0 flex-1 truncate text-foreground">$ {command.trim()}</span>
+                <span className="shrink-0 font-medium text-primary-text">running…</span>
+              </div>
+              <pre
+                ref={liveView}
+                onScroll={(e) => {
+                  const el = e.currentTarget;
+                  liveFollow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+                }}
+                className="max-h-[50dvh] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-code text-foreground"
+                data-testid="bash-live"
+              >
+                {live}
+              </pre>
+            </section>
           ) : null}
           {error ? (
             error === STOPPED_WAITING ? (
@@ -324,25 +330,43 @@ export function TerminalTab({ sessionPath, active }: { sessionPath: string; acti
           ) : null}
           {output ? (
             <section className="flex min-w-0 flex-col gap-2" data-testid="bash-output">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 flex-1 truncate font-mono text-code text-muted-foreground">$ {output.command}</span>
-                {failed ? (
-                  <Chip tone="danger">{output.cancelled ? "Cancelled" : `Exit ${output.exitCode}`}</Chip>
-                ) : null}
+              <div
+                className={cn(
+                  "overflow-hidden rounded-lg border bg-surface-1",
+                  failed ? "border-danger/35" : "border-success/30",
+                )}
+              >
+                <div className="flex min-w-0 items-center justify-between gap-2 border-b border-hairline bg-surface-2 px-3 py-2 font-mono text-code">
+                  <span className="min-w-0 flex-1 truncate text-foreground">$ {output.command}</span>
+                  {failed ? (
+                    <Chip tone="danger">{output.cancelled ? "Cancelled" : `Exit ${output.exitCode}`}</Chip>
+                  ) : (
+                    <span className="inline-flex shrink-0 items-center gap-1 font-medium text-success">
+                      <CheckCircle2Icon aria-hidden className="size-3.5" />
+                      exit 0
+                    </span>
+                  )}
+                </div>
+                <pre className="max-h-[50dvh] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-code text-foreground">
+                  {output.output || "No output"}
+                </pre>
               </div>
-              <pre className="max-h-[50dvh] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface-1 p-3 font-mono text-code text-foreground">
-                {output.output || "No output"}
-              </pre>
-              {output.truncated ? <p className="text-meta text-muted-foreground">Output was cut short.</p> : null}
+              {output.truncated ? <p className="px-1 text-meta text-muted-foreground">Output was cut short.</p> : null}
               {output.excluded ? (
-                <p className="text-meta text-muted-foreground" data-testid="bash-excluded">Not added to the conversation.</p>
+                <p className="px-1 text-meta text-muted-foreground" data-testid="bash-excluded">Not added to the conversation.</p>
               ) : null}
             </section>
           ) : null}
           {recent.length > 0 ? (
-            <RowGroup title="Recent">
+            <RowGroup inset title="Recent">
               {recent.map((h) => (
-                <Row key={h} leading={<HistoryIcon />} title={<span className="block truncate">{h}</span>} onClick={() => updateCommand(h)} />
+                <Row
+                  key={h}
+                  leadingSize="sm-tile"
+                  leading={<RowTile tone="page"><HistoryIcon aria-hidden /></RowTile>}
+                  title={<span className="block truncate font-mono text-code text-foreground">{h}</span>}
+                  onClick={() => updateCommand(h)}
+                />
               ))}
             </RowGroup>
           ) : null}

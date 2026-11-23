@@ -26,7 +26,7 @@ import { EmptyState } from "@/app/ui/EmptyState";
 import { Notice } from "@/app/ui/Notice";
 import { humanizeDaemonError } from "@/app/ui/OwnedBySession";
 import { errorRecoveryAction } from "@/app/ui/error-recovery";
-import { Row, RowGroup, RowSkeleton } from "@/app/ui/Row";
+import { Row, RowGroup, RowSkeleton, RowTile } from "@/app/ui/Row";
 import { BottomSheet, ConfirmSheet } from "@/app/ui/Sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -216,7 +216,7 @@ function PlanCard({ phases, editor, children }: { phases: readonly UiTodoPhase[]
   const now = phases.flatMap((phase) => phase.tasks).find((task) => task.status === "in_progress");
   const percent = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
   return (
-    <section className="overflow-hidden rounded-xl bg-surface-1" data-testid="todo-list">
+    <section className="overflow-hidden rounded-lg border border-hairline bg-surface-1" data-testid="todo-list">
       <button
         type="button"
         aria-expanded={open}
@@ -1255,9 +1255,10 @@ export function TasksTab({ sessionPath, active, focused }: { sessionPath: string
             </Button>
           </form>
         ) : actionsId ? (
-          <RowGroup>
+          <RowGroup inset="sheet">
             <Row
-              leading={<CornerUpLeftIcon />}
+              leadingSize="sm-tile"
+              leading={<RowTile><CornerUpLeftIcon aria-hidden /></RowTile>}
               title={actionRow?.kind === "ask" ? "Re-answer" : "Edit this prompt"}
               subtitle={actionRow?.kind === "ask" ? "Answer differently and continue from this decision" : "Put this prompt back in the composer; keep later replies on their branch"}
               disabled={branchingId !== null || moveRestriction !== null}
@@ -1267,7 +1268,8 @@ export function TasksTab({ sessionPath, active, focused }: { sessionPath: string
             {actionRow?.resumeTargets.map((target, index, targets) => (
               <Row
                 key={target.id}
-                leading={<GitBranchIcon />}
+                leadingSize="sm-tile"
+                leading={<RowTile><GitBranchIcon aria-hidden /></RowTile>}
                 title={targets.length > 1 ? `Continue after answer ${index + 1}` : "Continue after answer"}
                 subtitle={target.text}
                 disabled={branchingId !== null || moveRestriction !== null}
@@ -1277,7 +1279,8 @@ export function TasksTab({ sessionPath, active, focused }: { sessionPath: string
             ))}
             {actionRow?.kind !== "ask" ? (
             <Row
-              leading={<GitForkIcon />}
+              leadingSize="sm-tile"
+              leading={<RowTile><GitForkIcon aria-hidden /></RowTile>}
               title="Rewind into a new chat"
               subtitle="This message goes back in the composer to edit"
               disabled={branchingId !== null}
@@ -1287,7 +1290,8 @@ export function TasksTab({ sessionPath, active, focused }: { sessionPath: string
             ) : null}
             {actionRow ? (
               <Row
-                leading={<TagIcon />}
+                leadingSize="sm-tile"
+                leading={<RowTile><TagIcon aria-hidden /></RowTile>}
                 title={actionRow.label ? "Edit label" : "Add label"}
                 disabled={branchingId !== null}
                 onClick={() => setLabelDraft(actionRow.label ?? "")}
@@ -1296,7 +1300,8 @@ export function TasksTab({ sessionPath, active, focused }: { sessionPath: string
             ) : null}
             {actionRow?.label ? (
               <Row
-                leading={<XIcon />}
+                leadingSize="sm-tile"
+                leading={<RowTile className="border-danger/25 bg-danger-tint text-danger"><XIcon aria-hidden /></RowTile>}
                 title="Remove label"
                 destructive
                 disabled={branchingId !== null}
@@ -1315,7 +1320,7 @@ export function TasksTab({ sessionPath, active, focused }: { sessionPath: string
         testId="timeline-move-options"
       >
         {moveRestriction ? <p className="mb-3 text-meta text-muted-foreground">{moveRestriction}</p> : null}
-        <RowGroup>
+        <RowGroup inset="sheet">
           <Row
             title="Summarize branch"
             subtitle="OMP carries a summary into the next turn"

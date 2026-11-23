@@ -18,6 +18,8 @@ export function Segmented<T extends string>({
   value,
   onChange,
   size = "md",
+  variant = "pill",
+  accent = false,
   className,
   testId,
   "aria-label": ariaLabel,
@@ -27,12 +29,18 @@ export function Segmented<T extends string>({
   onChange: (value: T) => void;
   /** md: 36px track. compact: 32px track for toolbars (Steer | Queue). Both keep 44px hits. */
   size?: "md" | "compact";
+  /** pill: capsule track. card: rounded-md track nested cleanly inside elevated cards. */
+  variant?: "pill" | "card";
+  /** Use the primary accent fill for the active indicator (e.g. Model picker thinking effort). */
+  accent?: boolean;
   className?: string;
   testId?: string;
   "aria-label"?: string;
 }): JSX.Element {
   const enabled = options.filter((o) => !o.disabled);
   const selected = options.findIndex((o) => o.value === value);
+  const trackRadius = variant === "card" ? "rounded-md" : "rounded-full";
+  const itemRadius = variant === "card" ? "rounded-sm" : "rounded-full";
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1
       : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
@@ -55,7 +63,8 @@ export function Segmented<T extends string>({
       onKeyDown={onKeyDown}
       data-size={size}
       className={cn(
-        "relative flex min-w-0 items-stretch gap-0.5 rounded-full bg-surface-1 p-0.5 ring-1 ring-hairline ring-inset",
+        "relative flex min-w-0 items-stretch gap-0.5 bg-surface-1 p-0.5 ring-1 ring-hairline ring-inset",
+        trackRadius,
         size === "compact" ? "h-8" : "h-9",
         className,
       )}
@@ -64,7 +73,11 @@ export function Segmented<T extends string>({
         <span
           aria-hidden
           data-testid="segmented-indicator"
-          className="pointer-events-none absolute inset-y-0.5 left-0.5 rounded-full bg-surface-3 shadow-[0_1px_2px_oklch(0_0_0/0.35)] transition-transform duration-[200ms] ease-[var(--ease-position)]"
+          className={cn(
+            "pointer-events-none absolute inset-y-0.5 left-0.5 shadow-[0_1px_2px_oklch(0_0_0/0.35)] transition-transform duration-[200ms] ease-[var(--ease-position)]",
+            itemRadius,
+            accent ? "bg-primary" : "bg-surface-3",
+          )}
           // Segments are flex-1 with a 2px gap: one segment is (track − 4px
           // padding − gaps) / n wide, and each step is a width plus a gap.
           style={{
@@ -89,11 +102,16 @@ export function Segmented<T extends string>({
             // hidden) on the button clipped the after: hit extension, and an
             // ellipsis cannot apply to a flex container anyway.
             className={cn(
-              "relative flex min-w-0 flex-1 items-center justify-center rounded-full px-2 text-meta outline-none [-webkit-tap-highlight-color:transparent]",
+              "relative flex min-w-0 flex-1 items-center justify-center px-2 text-meta outline-none [-webkit-tap-highlight-color:transparent]",
+              itemRadius,
               "after:absolute after:inset-x-0 after:content-[''] transition-colors duration-[var(--dur-control)] ease-[var(--ease-control)] focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
               // 32px segment + 6px, or 28px compact segment + 8px, either side = 44px.
               size === "compact" ? "after:-inset-y-2" : "after:-inset-y-1.5",
-              checked ? "font-medium text-foreground" : "press-bounce text-muted-foreground",
+              checked
+                ? accent
+                  ? "font-semibold text-primary-foreground"
+                  : "font-medium text-foreground"
+                : "press-bounce text-muted-foreground",
             )}
           >
             <span className="min-w-0 truncate">{option.label}</span>

@@ -5,6 +5,7 @@ import type { JSX } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 
 import { argvLine, type PluginInfo, type PluginOptionInfo } from "../../domain/plugins";
 import { pluginHost } from "../../runtime/plugin-host";
@@ -13,7 +14,7 @@ import { openPluginPage } from "../nav/panels";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorNotice } from "../ui/ErrorNotice";
 import { Notice } from "../ui/Notice";
-import { Row, RowGroup, RowSkeleton } from "../ui/Row";
+import { Row, RowGroup, RowSkeleton, RowTile } from "../ui/Row";
 import { Segmented } from "../ui/Segmented";
 import { usePluginHost } from "./use-plugin-host";
 
@@ -38,16 +39,17 @@ const PERMISSION_LABEL: Record<string, string> = {
   "session.rpc": "Read the whole conversation and change it (settings, rewind, fork, compact)",
 };
 
-function statusLine(plugin: PluginInfo): string {
+function statusBadge(plugin: PluginInfo, stopped: boolean): { label: string; tone: string; dot: string } {
+  if (stopped) return { label: "Stopped", tone: "bg-warning-tint text-warning", dot: "bg-warning" };
   switch (plugin.status) {
     case "enabled":
-      return "On";
+      return { label: "On", tone: "border border-hairline bg-surface-2 text-foreground", dot: "bg-success" };
     case "disabled":
-      return "Off";
+      return { label: "Off", tone: "border border-hairline bg-surface-2 text-muted-foreground", dot: "bg-muted-foreground" };
     case "needs_review":
-      return plugin.changed ? "Changed since you turned it on. Review it again" : "New. Review it before turning it on";
+      return { label: plugin.changed ? "Updated" : "Review", tone: "bg-warning-tint text-warning", dot: "bg-warning" };
     case "invalid":
-      return `Cannot load: ${plugin.error ?? "unknown error"}`;
+      return { label: "Invalid", tone: "bg-danger-tint text-danger", dot: "bg-danger" };
   }
 }
 
@@ -117,19 +119,57 @@ export function PluginsSettings(): JSX.Element {
           const failure = runtimes[plugin.id]?.state === "failed" ? runtimes[plugin.id]?.error : undefined;
           const valid = plugin.status !== "invalid";
           const canEnable = plugin.status === "needs_review" || plugin.status === "disabled";
-          // On, but its script was stopped on this phone: say so rather than "On".
-          const subtitle = failure !== undefined && plugin.status === "enabled" ? "Stopped on this phone" : statusLine(plugin);
+          const stopped = failure !== undefined && plugin.status === "enabled";
+          const badge = statusBadge(plugin, stopped);
+          const subtitle = stopped
+            ? "Stopped on this phone"
+            : plugin.status === "needs_review"
+              ? plugin.changed
+                ? "Changed since you turned it on. Review it again"
+                : "New. Review it before turning it on"
+              : plugin.status === "invalid"
+                ? `Cannot load: ${plugin.error ?? "unknown error"}`
+                : undefined;
+          const hasActions = canEnable || plugin.status === "enabled";
           return (
-            <div key={plugin.id} data-testid="plugin-row" data-plugin={plugin.id} data-status={plugin.status} data-changed={plugin.status === "needs_review" && plugin.changed ? "true" : undefined} className="flex min-w-0 flex-col gap-2">
+            <div key={plugin.id} data-testid="plugin-row" data-plugin={plugin.id} data-status={plugin.status} data-changed={plugin.status === "needs_review" && plugin.changed ? "true" : undefined} className="flex min-w-0 flex-col gap-2.5">
               <RowGroup inset>
                 <Row
-                  leading={<PuzzleIcon />}
-                  title={plugin.version ? `${plugin.name} ${plugin.version}` : plugin.name}
+                  leadingSize="tile"
+                  leading={
+                    <RowTile size="md" tone="page">
+                      <PuzzleIcon
+                        aria-hidden
+                        className={cn(
+                          "size-4.5",
+                          plugin.status === "enabled" && !stopped
+                            ? "text-primary-text"
+                            : plugin.status === "invalid"
+                              ? "text-danger"
+                              : plugin.status === "needs_review" || stopped
+                                ? "text-warning"
+                                : "text-muted-foreground",
+                        )}
+                      />
+                    </RowTile>
+                  }
+                  title={
+                    <span className="inline-flex max-w-full items-baseline gap-1.5">
+                      <span className="truncate font-medium">{plugin.name}</span>
+                      {plugin.version ? <span className="shrink-0 font-mono text-code text-muted-foreground">{plugin.version}</span> : null}
+                    </span>
+                  }
                   subtitle={subtitle}
+                  trailing={
+                    <span className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-code font-medium", badge.tone)}>
+                      <span aria-hidden className={cn("size-1.5 rounded-full", badge.dot)} />
+                      {badge.label}
+                    </span>
+                  }
                 />
                 {valid ? (
-                  <div className="flex min-w-0 flex-col gap-2 px-4 py-3 text-meta text-muted-foreground">
-                    {plugin.description ? <p className="break-words">{plugin.description}</p> : null}
+                  <div className="flex min-w-0 flex-col gap-3 px-4 py-3.5 text-meta text-muted-foreground">
+                    {plugin.description ? <p className="break-words text-ui text-foreground/90">{plugin.description}</p> : null}
                     <p>
                       <span className="font-medium text-foreground">Shows: </span>
                       {plugin.slots.map((slot) => SLOT_LABEL[slot] ?? slot).join(", ")}
@@ -139,18 +179,18 @@ export function PluginsSettings(): JSX.Element {
                       {plugin.sources.length === 0 ? (
                         "Runs no commands on the computer"
                       ) : (
-                        <ul className="mt-1 flex flex-col gap-1">
+                        <ul className="mt-1.5 flex flex-col gap-1.5">
                           {plugin.sources.map((source) => (
-                            <li key={source.id} className="min-w-0">
-                              <code className="break-all font-mono text-foreground">{argvLine(source.command)}</code>{" "}
-                              every {source.intervalS} s
+                            <li key={source.id} className="min-w-0 rounded-md border border-hairline bg-surface-2 px-2.5 py-1.5">
+                              <code className="break-words font-mono text-code text-foreground [overflow-wrap:anywhere]">{argvLine(source.command)}</code>{" "}
+                              <span className="whitespace-nowrap text-code text-muted-foreground">· every {source.intervalS} s</span>
                             </li>
                           ))}
                         </ul>
                       )}
                     </div>
                     {plugin.warnings.length > 0 ? (
-                      <ul data-testid="plugin-review-warnings" className="flex flex-col gap-1 text-warning">
+                      <ul data-testid="plugin-review-warnings" className="flex flex-col gap-1 border-l-2 border-warning pl-3 text-warning">
                         {plugin.warnings.map((warning) => (
                           <li key={warning} className="break-words">{warning}</li>
                         ))}
@@ -180,12 +220,12 @@ export function PluginsSettings(): JSX.Element {
                     {plugin.actions.length > 0 ? (
                       <div data-testid="plugin-review-actions">
                         <span className="font-medium text-foreground">On a tap, may run on the computer: </span>
-                        <ul className="mt-1 flex flex-col gap-1">
+                        <ul className="mt-1.5 flex flex-col gap-1.5">
                           {plugin.actions.map((action) => (
-                            <li key={action.id} className="min-w-0">
-                              {action.label}:{" "}
-                              <code className="break-all font-mono text-foreground">{argvLine(action.command)}</code>
-                              {action.argPattern ? <> ({"{arg}"} must match <code className="break-all font-mono text-foreground">{action.argPattern}</code>)</> : null}
+                            <li key={action.id} className="min-w-0 rounded-md border border-hairline bg-surface-2 px-2.5 py-1.5">
+                              <span className="text-foreground">{action.label}: </span>
+                              <code className="break-words font-mono text-code text-foreground [overflow-wrap:anywhere]">{argvLine(action.command)}</code>
+                              {action.argPattern ? <span className="text-code text-muted-foreground"> ({"{arg}"} must match <code className="break-words font-mono text-foreground [overflow-wrap:anywhere]">{action.argPattern}</code>)</span> : null}
                             </li>
                           ))}
                         </ul>
@@ -194,8 +234,8 @@ export function PluginsSettings(): JSX.Element {
                   </div>
                 ) : null}
                 {valid && plugin.options.length > 0 ? (
-                  <>
-                    <h3 className="px-4 pt-3 text-meta font-medium text-muted-foreground">Options</h3>
+                  <div className="flex min-w-0 flex-col divide-y divide-hairline">
+                    <h3 className="bg-surface-2/50 px-4 py-2 text-meta font-medium text-muted-foreground">Options</h3>
                     {plugin.options.map((option) => (
                       <OptionControl
                         key={option.id}
@@ -205,7 +245,26 @@ export function PluginsSettings(): JSX.Element {
                         onSave={(value) => track(plugin.id, pluginHost.setOptions(plugin.id, { [option.id]: value }))}
                       />
                     ))}
-                  </>
+                  </div>
+                ) : null}
+                {hasActions ? (
+                  <div className="flex flex-wrap gap-2 bg-surface-2/40 px-4 py-3">
+                    {canEnable ? (
+                      <Button className="min-h-11 rounded-md px-4" data-testid="plugin-enable" disabled={busy} onClick={() => decide(plugin.id, true, plugin.hash)}>
+                        Turn on
+                      </Button>
+                    ) : null}
+                    {plugin.status === "enabled" ? (
+                      <Button variant="secondary" className="min-h-11 rounded-md px-4" data-testid="plugin-disable" disabled={busy} onClick={() => decide(plugin.id, false)}>
+                        Turn off
+                      </Button>
+                    ) : null}
+                    {plugin.status === "enabled" && plugin.slots.includes("page") ? (
+                      <Button variant="secondary" className="min-h-11 rounded-md px-4" data-testid="plugin-open" disabled={busy} onClick={() => openPluginPage(plugin.id)}>
+                        Open
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : null}
               </RowGroup>
               {failure ? (
@@ -216,23 +275,6 @@ export function PluginsSettings(): JSX.Element {
                   {failure}
                 </Notice>
               ) : null}
-              <div className="flex flex-wrap gap-2">
-                {canEnable ? (
-                  <Button data-testid="plugin-enable" disabled={busy} onClick={() => decide(plugin.id, true, plugin.hash)}>
-                    Turn on
-                  </Button>
-                ) : null}
-                {plugin.status === "enabled" ? (
-                  <Button variant="outline" data-testid="plugin-disable" disabled={busy} onClick={() => decide(plugin.id, false)}>
-                    Turn off
-                  </Button>
-                ) : null}
-                {plugin.status === "enabled" && plugin.slots.includes("page") ? (
-                  <Button variant="outline" data-testid="plugin-open" disabled={busy} onClick={() => openPluginPage(plugin.id)}>
-                    Open
-                  </Button>
-                ) : null}
-              </div>
             </div>
           );
         })}
@@ -275,7 +317,8 @@ function OptionControl({ option, value, disabled, onSave }: {
         <span className="text-ui text-foreground">{option.label}</span>
         <Segmented
           aria-label={option.label}
-          className="bg-background"
+          variant="card"
+          className="bg-surface-2"
           options={option.choices.map((choice) => ({ value: choice, label: choice, disabled }))}
           value={String(value)}
           onChange={onSave}

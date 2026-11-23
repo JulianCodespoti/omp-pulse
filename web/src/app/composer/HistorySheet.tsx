@@ -14,7 +14,8 @@ import type { DaemonApi } from "../../runtime/rpc-client";
 import { relativeTime } from "../session-format";
 import { SearchField } from "../ui/SearchField";
 import { Notice } from "../ui/Notice";
-import { BottomSheet, SheetEmpty, SheetGroup, SheetRow } from "../ui/Sheet";
+import { Row, RowGroup, RowTile } from "../ui/Row";
+import { BottomSheet, SheetEmpty } from "../ui/Sheet";
 import { readPromptHistory } from "./prompt-history-store";
 import { getDraftNamespace } from "./use-draft";
 
@@ -125,8 +126,8 @@ export function HistorySheet({
   const now = Date.now();
   return (
     <BottomSheet open={open} onOpenChange={onOpenChange} title="History" testId="history-sheet">
-      <SearchField value={query} onChange={setQuery} placeholder="Search your messages" testId="history-search" className="mb-2" />
-      {error ? <Notice tone="danger" className="mb-2" action={errorRecoveryAction(error)} testId="history-error">{error}</Notice> : null}
+      <SearchField value={query} onChange={setQuery} placeholder="Search your messages" testId="history-search" className="mb-3" />
+      {error ? <Notice tone="danger" className="mb-3" action={errorRecoveryAction(error)} testId="history-error">{error}</Notice> : null}
       {items.length === 0 ? (
         searching ? null : (
           <SheetEmpty
@@ -136,22 +137,24 @@ export function HistorySheet({
           />
         )
       ) : (
-        <SheetGroup testId="history-list">
+        <RowGroup inset="sheet" testId="history-list">
           {items.map((item, i) => {
             const at = sentAt.get(item.text);
             return (
-              <SheetRow
+              <Row
                 key={`${item.origin}:${i}:${item.text.slice(0, 40)}`}
                 testId="history-row"
-                icon={item.origin === "device" ? <HistoryIcon /> : <MessageSquareIcon />}
+                leadingSize="sm-tile"
+                leading={<RowTile>{item.origin === "device" ? <HistoryIcon aria-hidden /> : <MessageSquareIcon aria-hidden />}</RowTile>}
                 title={item.text.replace(/\s+/g, " ")}
-                meta={item.origin === "device" ? (at ? relativeTime(at, now) : undefined) : item.session?.title}
+                subtitle={item.origin === "device" ? undefined : item.session?.title}
+                trailing={item.origin === "device" && at ? <span className="font-mono text-code tabular-nums text-muted-foreground">{relativeTime(at, now)}</span> : undefined}
                 disabled={inserting}
                 onClick={() => void pick(item)}
               />
             );
           })}
-        </SheetGroup>
+        </RowGroup>
       )}
     </BottomSheet>
   );

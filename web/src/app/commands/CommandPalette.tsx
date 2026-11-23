@@ -23,7 +23,7 @@ import { openNewSession, openSettings, openWorkspace, type WorkspaceTab } from "
 import { activeTime, projectLabel, relativeTime, sessionTitle } from "../session-format";
 import { sessionStatus } from "../session-status";
 import { EmptyState } from "../ui/EmptyState";
-import { Row, RowGroup, RowSkeleton } from "../ui/Row";
+import { Row, RowGroup, RowSkeleton, RowTile } from "../ui/Row";
 import { BottomSheet, SheetSearch } from "../ui/Sheet";
 import { SessionStatusGlyph } from "../ui/Status";
 import { liveStateFor, type OmpCommand } from "./command-registry";
@@ -252,13 +252,14 @@ export function CommandPalette({
         )
       }
     >
-      <div onKeyDown={handleKeyDown} className="flex flex-col gap-4">
+      <div onKeyDown={handleKeyDown} className="flex flex-col gap-5">
         {drill ? (
           drill.subcommands && drill.subcommands.length > 0 ? (
-            <RowGroup>
+            <RowGroup inset="sheet">
               {drill.subcommands.map((sub) => (
                 <CommandRow
                   key={sub.name}
+                  framed
                   onClick={() => handleSelectSub(sub)}
                   title={`/${drill.name} ${sub.name}`}
                   description={displayDescription(sub.description) ?? sub.usage}
@@ -274,13 +275,13 @@ export function CommandPalette({
         ) : (
           <>
             {sessionsPending ? (
-              <RowGroup title="Sessions" aria-busy="true" aria-label="Loading sessions">
+              <RowGroup inset="sheet" title="Sessions" aria-busy="true" aria-label="Loading sessions">
                 <RowSkeleton leading subtitle />
                 <RowSkeleton leading subtitle />
               </RowGroup>
             ) : null}
             {sessionRows.length > 0 ? (
-              <RowGroup title="Sessions" testId="palette-sessions">
+              <RowGroup inset="sheet" title="Sessions" testId="palette-sessions">
                 {sessionRows.map((session) => {
                   const state = sessionStatus(session);
                   return (
@@ -298,36 +299,41 @@ export function CommandPalette({
               </RowGroup>
             ) : null}
             {panelRows.length > 0 ? (
-              <RowGroup title="Panels" testId="palette-panels">
+              <RowGroup inset="sheet" title="Panels" testId="palette-panels">
                 {panelRows.map((panel) => (
                   <Row
                     key={panel.tab}
                     testId="palette-panel"
-                    leading={panel.icon}
+                    leadingSize="sm-tile"
+                    leading={<RowTile>{panel.icon}</RowTile>}
                     title={panel.label}
+                    chevron
                     onClick={() => go(() => openWorkspace(panel.tab))}
                   />
                 ))}
               </RowGroup>
             ) : null}
             {actionRows.length > 0 ? (
-              <RowGroup title="Actions" testId="palette-actions">
+              <RowGroup inset="sheet" title="Actions" testId="palette-actions">
                 {actionRows.map((action) => (
                   <Row
                     key={action.id}
                     testId="palette-action"
-                    leading={action.icon}
+                    leadingSize="sm-tile"
+                    leading={<RowTile>{action.icon}</RowTile>}
                     title={action.label}
+                    chevron
                     onClick={() => go(action.run)}
                   />
                 ))}
               </RowGroup>
             ) : null}
             {commandGroups.map(([source, cmds]) => (
-              <RowGroup key={source} title={commandGroupTitle(source)}>
+              <RowGroup key={source} inset="sheet" title={commandGroupTitle(source)}>
                 {cmds.map((cmd) => (
                   <CommandRow
                     key={cmd.name}
+                    framed
                     onClick={() => handleSelectCommand(cmd)}
                     title={`/${cmd.name}`}
                     aliases={cmd.aliases && cmd.aliases.length > 0 ? cmd.aliases.map((a) => `/${a.replace(/^\/+/, "")}`).join(" ") : undefined}

@@ -1,10 +1,10 @@
 import { BoxIcon, CheckIcon, PlusIcon, RotateCwIcon, SearchIcon } from "lucide-react";
 import { Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ContextMeter } from "../ui/ContextMeter";
+import { formatTokens, MeterBlock } from "../ui/ContextMeter";
 import { Switch } from "@/components/ui/switch";
 import { BottomSheet, SheetSearch } from "../ui/Sheet";
 import { Notice } from "../ui/Notice";
-import { Row, RowGroup, RowSkeleton } from "../ui/Row";
+import { Row, RowGroup, RowSkeleton, RowTile } from "../ui/Row";
 import { Segmented } from "../ui/Segmented";
 import { daemonErrorCause, humanizeDaemonError } from "../ui/OwnedBySession";
 import { errorRecoveryAction } from "../ui/error-recovery";
@@ -259,7 +259,7 @@ function ModelSheet({
       </Notice>
     );
   } else if (loading) {
-    body = <RowGroup>{[0, 1, 2, 3].map((index) => <RowSkeleton key={index} subtitle />)}</RowGroup>;
+    body = <RowGroup inset="sheet">{[0, 1, 2, 3].map((index) => <RowSkeleton key={index} leading="tile" subtitle />)}</RowGroup>;
   } else if (models.length === 0) {
     body = empty;
   } else if (groups.length === 0) {
@@ -270,7 +270,7 @@ function ModelSheet({
     );
   } else {
     body = groups.map((group) => (
-      <RowGroup key={group.key} title={group.title} className={STICKY_TITLE} testId={`model-group-${group.key}`}>
+      <RowGroup key={group.key} inset="sheet" title={group.title} className={STICKY_TITLE} testId={`model-group-${group.key}`}>
         {group.models.map((model) => {
           const key = modelKey(model);
           const name = shortModel(model.name || model.id);
@@ -292,10 +292,16 @@ function ModelSheet({
               aria-pressed={checked}
               aria-label={`${name} · ${key}`}
               disabled={disabled}
+              className={checked ? "bg-primary-tint/50" : undefined}
               onClick={() => onSelectModel(model)}
               // The maker, not the host: one provider group (Kilo, Zenmux, Copilot) mixes many makers.
-              leading={<ProviderLogo model={model.id} provider={model.provider} className="size-5" />}
-              title={<span data-testid="model-name">{name}</span>}
+              leadingSize="sm-tile"
+              leading={
+                <RowTile className={checked ? "border-primary-text/25 bg-primary-tint" : undefined}>
+                  <ProviderLogo model={model.id} provider={model.provider} className="size-4.5" />
+                </RowTile>
+              }
+              title={<span data-testid="model-name" className={checked ? "font-medium" : undefined}>{name}</span>}
               subtitle={facts.length ? facts.map((fact, index) => <Fragment key={index}>{index > 0 ? " · " : ""}{fact}</Fragment>) : undefined}
               trailing={checked ? <CheckIcon data-testid="model-current-check" aria-hidden className="size-5 text-primary-text" /> : null}
             />
@@ -307,14 +313,23 @@ function ModelSheet({
 
   const selectedContext = formatContextWindow(selected?.contextWindow);
   const windowTokens = usage?.windowTokens ?? selected?.contextWindow;
+  const usedTokens = usage && windowTokens ? Math.round((usage.percent / 100) * windowTokens) : undefined;
+  const usageRounded = usage ? Math.round(Math.min(100, Math.max(0, usage.percent))) : 0;
+  const usageUsedLabel = formatTokens(usedTokens);
+  const usageTotalLabel = formatTokens(windowTokens);
+  const usageDetail = usageUsedLabel && usageTotalLabel
+    ? `${usageUsedLabel} / ${usageTotalLabel} · ${usageRounded}%`
+    : `${usageRounded}%`;
   const footer = selected || trailingFooter ? (
     <div className="space-y-3">
       {levels.length > 0 ? (
         <div className="space-y-1.5">
-          <p aria-hidden className="text-meta text-muted-foreground">Thinking</p>
+          <p aria-hidden className="text-meta font-medium text-muted-foreground">Thinking</p>
           <Segmented
             aria-label="Thinking"
             testId="model-thinking"
+            variant="card"
+            accent
             // Six efforts plus Off leave ~50px a segment on a phone: full words
             // would be cut, so long ladders show short ones and keep the full
             // word for screen readers.
@@ -346,17 +361,17 @@ function ModelSheet({
         <p data-testid="model-no-thinking" className="text-meta text-muted-foreground">No thinking levels for {shortModel(selected.name || selected.id)}.</p>
       ) : null}
       {usage ? (
-        <ContextMeter
+        <MeterBlock
           testId="model-context"
-          size="full"
+          label="Context"
+          detail={usageDetail}
           percent={usage.percent}
-          windowTokens={windowTokens}
-          usedTokens={windowTokens ? Math.round((usage.percent / 100) * windowTokens) : undefined}
+          ariaLabel={`Context ${usageRounded}% used`}
         />
       ) : null}
       {(!usage && selectedContext) || trailingFooter ? (
         <div className="flex min-h-11 items-center justify-between gap-3">
-          <p data-testid="model-facts" className="min-w-0 text-meta text-muted-foreground">{!usage && selectedContext ? `Context · ${selectedContext}` : ""}</p>
+          <p data-testid="model-facts" className="min-w-0 font-mono text-meta text-muted-foreground">{!usage && selectedContext ? `Context · ${selectedContext}` : ""}</p>
           {trailingFooter}
         </div>
       ) : null}
@@ -380,8 +395,15 @@ function ModelSheet({
         {notice}
         {body}
         {!loading && models.length > 0 ? (
-          <RowGroup>
-            <Row leading={<PlusIcon aria-hidden />} title="Add a provider" chevron onClick={() => openProviders(onOpenChange)} testId="model-add-provider" />
+          <RowGroup inset="sheet">
+            <Row
+              leadingSize="sm-tile"
+              leading={<RowTile><PlusIcon aria-hidden /></RowTile>}
+              title="Add a provider"
+              chevron
+              onClick={() => openProviders(onOpenChange)}
+              testId="model-add-provider"
+            />
           </RowGroup>
         ) : null}
       </div>

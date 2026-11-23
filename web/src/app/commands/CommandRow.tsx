@@ -1,4 +1,4 @@
-import { Row } from "../ui/Row";
+import { Row, RowTile } from "../ui/Row";
 import { sourceIcon } from "./command-order";
 
 /**
@@ -28,7 +28,7 @@ export function displayDescription(text?: string): string | undefined {
  * value (the current model, context used) sits trailing as a row value does.
  */
 export function CommandRow({
-  title, aliases, description, detail, drill, selected, source, onClick,
+  title, aliases, description, detail, drill, selected, source, framed = false, onClick,
 }: {
   title: string;
   aliases?: string;
@@ -38,6 +38,8 @@ export function CommandRow({
   selected?: boolean;
   /** The command's source (builtin, tasks, skill, file, mcp). */
   source?: string;
+  /** Renders the leading icon in a rounded tile and mono command name inside sheet cards. */
+  framed?: boolean;
   onClick: () => void;
 }) {
   const Icon = sourceIcon(source);
@@ -48,15 +50,16 @@ export function CommandRow({
       selected={selected}
       onClick={onClick}
       chevron={drill}
-      leading={<Icon aria-hidden />}
+      leadingSize={framed ? "sm-tile" : "icon"}
+      leading={framed ? <RowTile><Icon aria-hidden /></RowTile> : <Icon aria-hidden />}
       title={
         <>
-          <span data-testid="command-name">{title}</span>
-          {aliases ? <span data-testid="command-aliases" className="ml-2 text-meta text-muted-foreground">{aliases}</span> : null}
+          <span data-testid="command-name" className={framed ? "font-mono font-medium" : undefined}>{title}</span>
+          {aliases ? <span data-testid="command-aliases" className="ml-2 font-mono text-meta text-muted-foreground">{aliases}</span> : null}
         </>
       }
       subtitle={description ? <span data-testid="command-description">{description}</span> : undefined}
-      trailing={detail ? <span data-testid="command-detail" className="tabular-nums">{detail}</span> : undefined}
+      trailing={detail ? <span data-testid="command-detail" className="font-mono tabular-nums">{detail}</span> : undefined}
     />
   );
 }

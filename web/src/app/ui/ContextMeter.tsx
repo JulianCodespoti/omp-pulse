@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import type { JSX, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -113,5 +113,80 @@ export function ContextMeter({
         </span>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * Full-width labelled meter block for elevated cards (Usage, Session settings,
+ * Model picker): title + optional inline value on the left, mono telemetry or
+ * reset countdown on the right, and a crisp full-width semantic bar below.
+ */
+export function MeterBlock({
+  label,
+  percent,
+  valueText,
+  detail,
+  detailMono = true,
+  secondary,
+  ariaLabel,
+  className,
+  testId,
+}: {
+  label: ReactNode;
+  percent: number;
+  /** Optional inline readout next to label (e.g. "62%"). */
+  valueText?: ReactNode;
+  /** Right-aligned mono readout or reset countdown above the bar. */
+  detail?: ReactNode;
+  /** Use monospace for `detail` (token figures). Set false for prose like "Resets in 2h". */
+  detailMono?: boolean;
+  /** Optional helper copy below the bar. */
+  secondary?: ReactNode;
+  ariaLabel: string;
+  className?: string;
+  testId?: string;
+}): JSX.Element {
+  const value = Number.isFinite(percent) ? Math.min(100, Math.max(0, percent)) : 0;
+  const rounded = Math.round(value);
+  const { fill, tone, tier } = contextFill(value);
+  const emphasis = tier ? tone : "text-foreground";
+  return (
+    <div
+      role="meter"
+      aria-valuenow={rounded}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={ariaLabel}
+      data-slot="context-meter"
+      data-tone={tier ?? "muted"}
+      data-testid={testId}
+      className={cn("flex min-w-0 flex-col gap-2", className)}
+    >
+      <div className="flex min-w-0 items-baseline justify-between gap-2">
+        <span className="flex min-w-0 items-baseline gap-1.5">
+          <span className="min-w-0 truncate text-ui font-medium text-foreground">{label}</span>
+          {valueText !== undefined && valueText !== null && valueText !== false ? (
+            <span className={cn("shrink-0 font-mono text-meta font-semibold tabular-nums", emphasis)}>
+              {valueText}
+            </span>
+          ) : null}
+        </span>
+        {detail !== undefined && detail !== null && detail !== false ? (
+          <span className={cn("shrink-0 whitespace-nowrap text-meta tabular-nums text-muted-foreground", detailMono && "font-mono")}>
+            {detail}
+          </span>
+        ) : null}
+      </div>
+      <span aria-hidden className="relative h-1.5 w-full overflow-hidden rounded-full bg-foreground/12">
+        <span
+          className={cn(
+            "absolute inset-y-0 left-0 w-full origin-left rounded-full transition-[scale,background-color] duration-[400ms] ease-[var(--ease-position)]",
+            fill,
+          )}
+          style={{ scale: String(Math.max(value >= 1 ? 0.02 : 0, Math.min(100, value) / 100)) }}
+        />
+      </span>
+      {secondary ? <div className="text-meta text-muted-foreground">{secondary}</div> : null}
+    </div>
   );
 }

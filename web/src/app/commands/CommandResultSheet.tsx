@@ -6,8 +6,8 @@ import { InboxIcon } from "lucide-react";
 
 import { Markdown } from "@/components/markdown";
 import { showToast } from "@/app/Notices";
-import { ContextMeter } from "@/app/ui/ContextMeter";
-import { BottomSheet, SheetGroup } from "@/app/ui/Sheet";
+import { formatTokens, MeterBlock } from "@/app/ui/ContextMeter";
+import { BottomSheet } from "@/app/ui/Sheet";
 import { EmptyState } from "@/app/ui/EmptyState";
 import { Notice } from "@/app/ui/Notice";
 import { humanizeDaemonError } from "@/app/ui/OwnedBySession";
@@ -35,43 +35,55 @@ export interface CommandResult {
   provenance?: "live" | "derived";
 }
 
-/** Bar colour by how close a /context share is to the cap. */
-function limitFill(percent: number): string {
-  return percent >= 90 ? "bg-danger" : percent >= 70 ? "bg-attention" : "bg-primary";
-}
-
 const tokenCount = new Intl.NumberFormat("en-US");
 
-/** omp's `/context` breakdown: the used share as the hero, one row per category. */
+/** omp's `/context` breakdown: labelled context meter card + bordered category card. */
 function ContextBreakdown({ report }: { report: ContextReport }) {
+  const usedTokens = Math.round((report.percent / 100) * report.contextWindow);
+  const usedLabel = formatTokens(usedTokens);
+  const totalLabel = formatTokens(report.contextWindow);
+  const detail = usedLabel && totalLabel
+    ? `${usedLabel} / ${totalLabel} · ${report.percent}%`
+    : `${report.percent}%`;
   return (
-    <div data-testid="context-breakdown" className="space-y-4">
-      <div className="space-y-2.5 rounded-xl bg-surface-2 px-4 py-4">
-        <div className="flex items-baseline justify-between gap-3">
-          <span className="text-large-title font-semibold tabular-nums">{report.percent}%</span>
-          <span className="text-meta tabular-nums text-muted-foreground">of {tokenCount.format(report.contextWindow)} tokens</span>
-        </div>
-        <div role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={report.percent} aria-label={`Context usage ${report.percent} percent`} className="h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
-          <div className={cn("h-full rounded-full", limitFill(report.percent))} style={{ width: `${Math.min(100, Math.max(0, report.percent))}%` }} />
-        </div>
-      </div>
+    <div data-testid="context-breakdown" className="space-y-5">
+      <RowGroup inset="sheet" title="Context window">
+        <MeterBlock
+          label="Used"
+          detail={detail}
+          percent={report.percent}
+          ariaLabel={`Context usage ${report.percent} percent`}
+          className="px-4 py-3.5"
+        />
+      </RowGroup>
       {report.categories.length > 0 ? (
-        <SheetGroup>
-          {report.categories.map((category) => (
-            <div key={category.label} data-testid="context-category" className="space-y-2 px-4 py-3">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="min-w-0 text-ui text-foreground">{category.label}</span>
-                <span className="shrink-0 text-ui tabular-nums text-muted-foreground">{tokenCount.format(category.tokens)}</span>
+        <RowGroup inset="sheet" title="Breakdown">
+          {report.categories.map((category) => {
+            const isFree = category.label.toLowerCase() === "free";
+            return (
+              <div key={category.label} data-testid="context-category" className="flex flex-col gap-2 px-4 py-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="flex min-w-0 items-baseline gap-1.5">
+                    <span className="min-w-0 truncate text-ui font-medium text-foreground">{category.label}</span>
+                    <span className="shrink-0 font-mono text-meta tabular-nums text-muted-foreground">{category.percent}%</span>
+                  </span>
+                  <span className="shrink-0 font-mono text-meta tabular-nums text-foreground">
+                    {tokenCount.format(category.tokens)}
+                  </span>
+                </div>
+                <div aria-hidden className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/12">
+                  <div
+                    className={cn("h-full rounded-full", isFree ? "bg-muted-foreground/45" : "bg-primary-text")}
+                    style={{ width: `${Math.min(100, Math.max(category.percent >= 1 ? 2 : 0, category.percent))}%` }}
+                  />
+                </div>
               </div>
-              <div aria-hidden className="h-1 w-full overflow-hidden rounded-full bg-surface-3">
-                <div className={cn("h-full rounded-full", category.label === "Free" ? "bg-muted-foreground/40" : "bg-primary")} style={{ width: `${Math.min(100, Math.max(0, category.percent))}%` }} />
-              </div>
-            </div>
-          ))}
-        </SheetGroup>
+            );
+          })}
+        </RowGroup>
       ) : null}
       {report.notes.length > 0 ? (
-        <p className="whitespace-pre-wrap break-words px-4 text-caption text-muted-foreground">{report.notes.join("\n")}</p>
+        <p className="whitespace-pre-wrap break-words px-1 text-meta text-muted-foreground">{report.notes.join("\n")}</p>
       ) : null}
     </div>
   );
@@ -147,13 +159,13 @@ export function CommandResultSheet({
     content = context ? (
       <ContextBreakdown report={context} />
     ) : /^\s*```/.test(result.output) ? (
-      <div data-testid="command-output" className="overflow-hidden rounded-xl bg-surface-2">
+      <div data-testid="command-output" className="overflow-hidden rounded-lg border border-hairline bg-surface-2">
         <Markdown>{result.output}</Markdown>
       </div>
     ) : /[█░▓▒]/.test(result.output) ? (
-      <pre data-testid="command-output" className="overflow-x-auto rounded-xl bg-surface-2 px-4 py-3.5 font-mono text-meta text-foreground">{result.output}</pre>
+      <pre data-testid="command-output" className="overflow-x-auto rounded-lg border border-hairline bg-surface-2 px-4 py-3.5 font-mono text-meta text-foreground">{result.output}</pre>
     ) : (
-      <p data-testid="command-output" className="whitespace-pre-wrap break-words rounded-xl bg-surface-2 px-4 py-3.5 text-ui text-foreground">{result.output}</p>
+      <p data-testid="command-output" className="whitespace-pre-wrap break-words rounded-lg border border-hairline bg-surface-2 px-4 py-3.5 text-ui text-foreground">{result.output}</p>
     );
   } else {
     const formatted = formatCommandResult(result.command, result.data);
@@ -169,38 +181,44 @@ export function CommandResultSheet({
     const hasJson = !!formatted.rawJson && !formatted.rows.length && !hasProgress;
 
     const kv = (list: { label: string; value: React.ReactNode }[], title?: string) => (
-      <RowGroup title={title}>
+      <RowGroup inset="sheet" title={title}>
         {list.map((r) => (
           <Row
             key={r.label}
             title={r.label}
-            trailing={<span className="text-ui tabular-nums text-muted-foreground">{r.value}</span>}
+            trailing={<span className="font-mono text-meta tabular-nums text-foreground">{r.value}</span>}
           />
         ))}
       </RowGroup>
     );
     const p = formatted.progress;
+    const pRounded = p ? Math.round(Math.min(100, Math.max(0, p.percent))) : 0;
+    const pUsed = p && p.max > 0 ? formatTokens(p.used) : "";
+    const pTotal = p && p.max > 0 ? formatTokens(p.max) : "";
+    const pDetail = pUsed && pTotal ? `${pUsed} / ${pTotal} · ${pRounded}%` : `${pRounded}%`;
 
     content = formatted.usage || result.limits ? (
       <UsagePanel formatted={formatted} limits={result.limits} provenance={result.provenance} onRetryLimits={onRetryLimits} />
     ) : (
-      <div className="space-y-6">
+      <div className="space-y-5">
         {p ? (
-          <section aria-label="Context" className="space-y-2">
-            <h3 className="text-meta font-medium text-muted-foreground">Context</h3>
-            <ContextMeter
-              size="full"
+          <RowGroup inset="sheet" title="Context">
+            <MeterBlock
+              label="Context"
+              detail={pDetail}
               percent={p.percent}
-              usedTokens={p.max > 0 ? p.used : undefined}
-              windowTokens={p.max > 0 ? p.max : undefined}
+              ariaLabel={`Context ${pRounded}% used`}
               testId="usage-context"
+              className="px-4 py-3.5"
+              secondary={
+                p.tint === "red"
+                  ? "Context is almost full. Compaction may run soon."
+                  : p.tint === "amber"
+                    ? "Context is getting full."
+                    : undefined
+              }
             />
-            {p.tint === "red" || p.tint === "amber" ? (
-              <p className="text-meta text-muted-foreground">
-                {p.tint === "red" ? "Context is almost full. Compaction may run soon." : "Context is getting full."}
-              </p>
-            ) : null}
-          </section>
+          </RowGroup>
         ) : null}
 
         {hasSections ? (

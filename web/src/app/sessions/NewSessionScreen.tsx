@@ -41,7 +41,7 @@ import { Notice } from "../ui/Notice";
 import { humanizeDaemonError } from "../ui/OwnedBySession";
 import { errorRecoveryAction } from "../ui/error-recovery";
 import { DictationNotice } from "../composer/DictationNotice";
-import { Row, RowGroup, RowSkeleton } from "../ui/Row";
+import { Row, RowGroup, RowSkeleton, RowTile } from "../ui/Row";
 import { SUGGESTIONS } from "../chat/EmptyChatHero";
 import { openSwitcher } from "../nav/panels";
 import { NeedsYouDot } from "./NeedsYouDot";
@@ -240,16 +240,17 @@ function useFolderBrowser({ active, onUse, onBack }: { active: boolean; onUse: (
       </Notice>
     );
   } else if (!data) {
-    body = <RowGroup>{[0, 1, 2, 3].map((index) => <RowSkeleton key={index} leading />)}</RowGroup>;
+    body = <RowGroup inset="sheet">{[0, 1, 2, 3].map((index) => <RowSkeleton key={index} leading="tile" />)}</RowGroup>;
   } else if (dirs.length > 0) {
     body = (
-      <RowGroup>
+      <RowGroup inset="sheet">
         {dirs.map((dir) => (
           <Row
             key={dir.path}
             testId="dir-row"
             onClick={() => void load(dir.path, false)}
-            leading={<FolderIcon />}
+            leadingSize="sm-tile"
+            leading={<RowTile><FolderIcon aria-hidden /></RowTile>}
             title={dir.name}
             aria-label={`Open ${dir.path}`}
             chevron
@@ -344,7 +345,7 @@ export function ProjectSheet({
     >
       {browsing ? browser.body : (
         <div className="space-y-4">
-          <RowGroup title="Recent" testId="project-recent">
+          <RowGroup inset="sheet" title="Recent" testId="project-recent">
             {rows.map((project) => {
               const isSelected = project.cwd === selected;
               const time = project.lastActiveAt ? relativeTime(project.lastActiveAt, now) : "";
@@ -354,17 +355,36 @@ export function ProjectSheet({
                   testId="project-row"
                   data-cwd={project.cwd}
                   aria-pressed={isSelected}
+                  className={isSelected ? "bg-primary-tint/50" : undefined}
                   onClick={() => choose(project.cwd)}
-                  leading={<FolderGit2Icon />}
-                  title={project.label}
+                  leadingSize="sm-tile"
+                  leading={
+                    <RowTile className={isSelected ? "border-primary-text/25 bg-primary-tint text-primary-text" : undefined}>
+                      <FolderGit2Icon aria-hidden />
+                    </RowTile>
+                  }
+                  title={<span className={isSelected ? "font-medium" : undefined}>{project.label}</span>}
                   subtitle={project.sessionCount ? `${pathTail(project.cwd)} · ${sessionCountLabel(project.sessionCount)}` : pathTail(project.cwd)}
-                  trailing={isSelected ? <CheckIcon aria-label="Selected" className="size-5 text-primary-text" /> : time || null}
+                  trailing={
+                    isSelected ? (
+                      <CheckIcon aria-label="Selected" className="size-5 text-primary-text" />
+                    ) : time ? (
+                      <span className="font-mono text-code tabular-nums text-muted-foreground">{time}</span>
+                    ) : null
+                  }
                 />
               );
             })}
           </RowGroup>
-          <RowGroup>
-            <Row testId="project-other-folder" onClick={() => setBrowsing(true)} leading={<FolderOpenIcon />} title="Other folder…" chevron />
+          <RowGroup inset="sheet">
+            <Row
+              testId="project-other-folder"
+              onClick={() => setBrowsing(true)}
+              leadingSize="sm-tile"
+              leading={<RowTile><FolderOpenIcon aria-hidden /></RowTile>}
+              title="Other folder…"
+              chevron
+            />
           </RowGroup>
         </div>
       )}
