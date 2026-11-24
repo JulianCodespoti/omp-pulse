@@ -1,7 +1,7 @@
 {
   "name": "omp-pulse-web",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "React PWA client for omp-pulse, served by the daemon and loaded by the Android shell.",
   "license": "MIT",
   "type": "module",

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-24
+
+### Changed
+- Overhauled Usage, Session settings, Model picker, Command palette, Terminal, Plugins, Session actions, New chat project picker, Command results, History, Skills, and Tasks/Changes summary cards with bordered inset cards, semantic meter blocks, elevated sheet surfaces, and monospace telemetry values.
+- Framed expanded tool command output inside a bordered terminal card with an elevated toolbar and `$ command` divider, and elevated subagent/argument details inside tool sheets.
+- Updated the landing page with the 48-second launch film, refreshed poster and screenshots (showing the fixed toggle switch and updated Changes card), and added terminal-attach (`herdr`, `kitty`, `tmux`) and battery-saving highlights to the README.
+
+### Fixed
+- Fixed Material 3 toggle switch track dimensions so thumbs stay aligned inside the track on all switches across Session settings, Appearance, Plugins, and Phone access.
+
 ## [0.2.0] - 2026-11-23
 
 ### Added
@@ -1197,6 +1207,7 @@ on the phone itself.
 - Aggressive OEM battery optimisation can still stop background delivery or
   the phone-mode daemon.
 
-[Unreleased]: https://github.com/JulianCodespoti/omp-pulse/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/JulianCodespoti/omp-pulse/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/JulianCodespoti/omp-pulse/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/JulianCodespoti/omp-pulse/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/JulianCodespoti/omp-pulse/releases/tag/v0.1.0
