@@ -30,7 +30,8 @@
 </p>
 
 <p align="center">
-  <em>Get a tap when a reply is ready, answer the agent's question, then check exactly what it changed.</em>
+  <em>Get a tap when a reply is ready, answer the agent's question, then check exactly what it changed.</em><br>
+  <a href="https://juliancodespoti.github.io/omp-pulse/#film"><strong>Watch the 48-second demo →</strong></a>
 </p>
 
 ---
@@ -48,6 +49,8 @@ Everything you would check at your desk, from wherever you are. Pulse shows the 
 
 And:
 
+- **Pick up right from your terminal.** Automatically joins running sessions in `herdr`, `kitty`, and `tmux` on macOS and Linux (and can hand phone chats back into a Herdr tab), without overwriting your terminal's work.
+- **Easy on your phone's battery.** Parks its file watcher and drops its wake lock whenever no turn is running, instead of keeping an active terminal session open in the background.
 - **Talk instead of typing.** Dictate a message; your speech is turned into text on your own computer, not in the cloud.
 - **Switch models on the fly.** Change the model or how hard it thinks, mid-conversation.
 - **Never lose a message.** Drafts and unsent messages survive a dropped connection.
