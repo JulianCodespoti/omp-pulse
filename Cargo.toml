@@ -5,14 +5,14 @@ edition = "2024"
 # The newest rust-version among locked dependencies (sysinfo). CI's msrv job
 # builds on exactly this toolchain, so raise it when a dependency does.
 rust-version = "1.95"
-description = "Drive your desktop Oh My Pi coding sessions from your phone: a single-binary daemon plus installable PWA"
+description = "OMP Pulse: mobile companion and Android runner for the Oh My Pi (omp) AI coding agent — single-binary Rust daemon plus installable PWA"
 authors = ["JulianCodespoti"]
 license = "MIT"
 repository = "https://github.com/JulianCodespoti/omp-pulse"
 homepage = "https://juliancodespoti.github.io/omp-pulse/"
 documentation = "https://juliancodespoti.github.io/omp-pulse/docs/"
 readme = "README.md"
-keywords = ["omp", "coding-agent", "remote", "pwa", "daemon"]
+keywords = ["omp", "oh-my-pi", "coding-agent", "android", "pwa"]
 categories = ["command-line-utilities", "development-tools", "web-programming"]
 exclude = ["bench/", "e2e/", "docs/", "target/"]
 

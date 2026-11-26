@@ -5,7 +5,7 @@
 <h1 align="center">OMP Pulse</h1>
 
 <p align="center">
-  <strong>Your coding agent, in your pocket.</strong> Follow, answer and steer <a href="https://github.com/can1357/oh-my-pi">omp</a> from your phone, or run it on Android with no computer at all.
+  <strong>Your AI coding agent, in your pocket.</strong> Follow, answer and steer <a href="https://github.com/can1357/oh-my-pi">omp (Oh My Pi)</a> from Android or iPhone, or run it natively on Android with no computer at all.
 </p>
 
 <p align="center">

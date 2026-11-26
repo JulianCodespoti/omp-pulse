@@ -49,6 +49,9 @@ jobs:
       - name: Install web workspace dependencies
         run: npm ci --prefix web --no-audit --no-fund
       - name: Build & verify static site
+        env:
+          OMP_PULSE_GOOGLE_SITE_VERIFICATION: ${{ vars.OMP_PULSE_GOOGLE_SITE_VERIFICATION }}
+          OMP_PULSE_BING_SITE_VERIFICATION: ${{ vars.OMP_PULSE_BING_SITE_VERIFICATION }}
         run: |
           node website/build.mjs
           node --test website/site.test.mjs

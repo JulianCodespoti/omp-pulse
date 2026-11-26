@@ -37,6 +37,11 @@ const SOCIAL_CARD = "assets/media/social-card.png";
 const RAW_MAIN = `https://raw.githubusercontent.com/${REPO_SLUG}/main`;
 const RELEASES_LATEST = `${REPO_URL}/releases/latest`;
 const APK_DIRECT = `${RELEASES_LATEST}/download/omp-pulse.apk`;
+const changelogMd = readFileSync(join(ROOT, "CHANGELOG.md"), "utf8");
+const RELEASE_DATE =
+  changelogMd.match(new RegExp(`^## \\[${VERSION.replaceAll(".", "\\.")}\\] - (\\d{4}-\\d{2}-\\d{2})`, "m"))?.[1] ??
+  changelogMd.match(/^## \[[^\]]+\] - (\d{4}-\d{2}-\d{2})/m)?.[1] ??
+  "";
 
 // ── Brand tokens (brand/tokens.json) ───────────────────────────────────────
 
@@ -85,7 +90,7 @@ export const DOC_PAGES = [
     group: "Start here",
     title: "Documentation overview",
     shortTitle: "Overview",
-    description: "Every guide, organised by what you want to do.",
+    description: "Complete OMP Pulse documentation: setup guides, Android phone mode, Tailscale networking, plugins, architecture and security.",
   },
   {
     slug: "docs/getting-started.html",
@@ -93,7 +98,7 @@ export const DOC_PAGES = [
     group: "Start here",
     title: "Getting started",
     shortTitle: "Getting started",
-    description: "Install Pulse, pair your phone and start your first conversation.",
+    description: "Install OMP Pulse alongside Oh My Pi (omp), pair your Android phone or iPhone via QR code, and start your first mobile coding session.",
   },
   {
     slug: "docs/phone-mode.html",
@@ -101,7 +106,7 @@ export const DOC_PAGES = [
     group: "Start here",
     title: "Phone mode",
     shortTitle: "Phone mode",
-    description: "Run the coding agent on your Android phone, with no computer.",
+    description: "Run the Oh My Pi (omp) AI coding agent natively on your Android phone with OMP Pulse, with no computer required.",
   },
   {
     slug: "docs/plugins.html",
@@ -109,7 +114,7 @@ export const DOC_PAGES = [
     group: "Using Pulse",
     title: "Plugins",
     shortTitle: "Plugins",
-    description: "Add your own buttons, chips and cards to the app, or have your agent build them.",
+    description: "Extend OMP Pulse with custom buttons, status chips, workspace panels and cards, or ask your coding agent to build one with /pulse-plugin.",
   },
   {
     slug: "docs/networking.html",
@@ -117,7 +122,7 @@ export const DOC_PAGES = [
     group: "Using Pulse",
     title: "Networking",
     shortTitle: "Networking",
-    description: "Reach your computer from anywhere: Tailscale, Cloudflare Tunnel or home Wi-Fi.",
+    description: "Connect OMP Pulse to your computer from anywhere over HTTPS using Tailscale Serve, Cloudflare Tunnel or home Wi-Fi.",
   },
   {
     slug: "docs/windows.html",
@@ -125,7 +130,7 @@ export const DOC_PAGES = [
     group: "Using Pulse",
     title: "Windows",
     shortTitle: "Windows",
-    description: "Install and run Pulse on Windows 10 and 11.",
+    description: "Install and run OMP Pulse on Windows 10 and 11, including Task Scheduler setup and terminal session pairing.",
   },
   {
     slug: "docs/configuration.html",
@@ -133,7 +138,7 @@ export const DOC_PAGES = [
     group: "Using Pulse",
     title: "Configuration & CLI reference",
     shortTitle: "Configuration & CLI",
-    description: "Every command and setting, for when you want to change the defaults.",
+    description: "OMP Pulse CLI commands, config.toml settings, pairing roles, environment variables and local speech-to-text options.",
   },
   {
     slug: "docs/architecture.html",
@@ -141,7 +146,7 @@ export const DOC_PAGES = [
     group: "Under the hood",
     title: "Architecture",
     shortTitle: "Architecture",
-    description: "How Pulse keeps your phone and terminal in step without overwriting each other's work.",
+    description: "How OMP Pulse keeps your phone and desktop Oh My Pi terminal in step with bounded streaming and single-writer ownership.",
   },
   {
     slug: "docs/security.html",
@@ -149,7 +154,7 @@ export const DOC_PAGES = [
     group: "Under the hood",
     title: "Security",
     shortTitle: "Security",
-    description: "Who can do what, where credentials live, and how to report a problem.",
+    description: "OMP Pulse security model: device key authentication, pairing roles, Android phone-mode boundaries and vulnerability reporting.",
   },
   {
     slug: "docs/contributing.html",
@@ -157,7 +162,7 @@ export const DOC_PAGES = [
     group: "Project",
     title: "Contributing",
     shortTitle: "Contributing",
-    description: "Build Pulse from source and run the checks before sending a change.",
+    description: "Build OMP Pulse from source (Rust, React, Capacitor Android) and run the verification suite before opening a pull request.",
   },
   {
     slug: "docs/changelog.html",
@@ -165,7 +170,7 @@ export const DOC_PAGES = [
     group: "Project",
     title: "Changelog",
     shortTitle: "Changelog",
-    description: "What changed in each release.",
+    description: "Release history and notable changes for each version of OMP Pulse.",
   },
 ];
 
@@ -257,6 +262,29 @@ function escapeHtml(str) {
     .replaceAll('"', "&quot;");
 }
 
+function escapeXml(str) {
+  return escapeHtml(str).replaceAll("'", "&apos;");
+}
+
+function canonicalUrl(slug) {
+  if (!slug || slug === "index.html") return SITE_URL;
+  if (slug.endsWith("/index.html")) return SITE_URL + slug.slice(0, -"index.html".length);
+  return SITE_URL + slug;
+}
+
+function stripInlineMarkdown(text) {
+  return String(text)
+    .replace(/\[([^\]]+)\]\([^)\s]+\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function serializeJsonLd(data) {
+  return JSON.stringify(data).replaceAll("<", "\\u003c");
+}
+
 // ── Shared Chrome ──────────────────────────────────────────────────────────
 
 function renderHeader(rootPrefix, activeSection) {
@@ -307,10 +335,34 @@ function renderFooter(rootPrefix) {
 </footer>`;
 }
 
-function renderDocument({ title, description, rootPrefix, activeSection, bodyHtml, slug = "" }) {
-  const pageUrl = SITE_URL + slug;
+function renderDocument({
+  title,
+  description,
+  rootPrefix,
+  activeSection,
+  bodyHtml,
+  slug = "",
+  ogType = "website",
+  robots = "",
+  structuredData = null,
+}) {
+  const pageUrl = canonicalUrl(slug);
   const cardUrl = SITE_URL + SOCIAL_CARD;
   const cardAlt = "OMP Pulse: your coding agent, in your pocket";
+  const googleVerify = process.env.OMP_PULSE_GOOGLE_SITE_VERIFICATION?.trim() ?? "";
+  const bingVerify = process.env.OMP_PULSE_BING_SITE_VERIFICATION?.trim() ?? "";
+  const isNoindex = /\bnoindex\b/i.test(robots);
+  const extraHead = [
+    robots ? `  <meta name="robots" content="${escapeHtml(robots)}">` : "",
+    !isNoindex ? `  <link rel="canonical" href="${escapeHtml(pageUrl)}">` : "",
+    googleVerify ? `  <meta name="google-site-verification" content="${escapeHtml(googleVerify)}">` : "",
+    bingVerify ? `  <meta name="msvalidate.01" content="${escapeHtml(bingVerify)}">` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const jsonLdTag = structuredData
+    ? `\n  <script type="application/ld+json">${serializeJsonLd(structuredData)}</script>`
+    : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -318,8 +370,8 @@ function renderDocument({ title, description, rootPrefix, activeSection, bodyHtm
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
   <meta name="description" content="${escapeHtml(description)}">
-  <meta name="theme-color" content="${BRAND.ink["950"]}">
-  <meta property="og:type" content="website">
+${extraHead ? `${extraHead}\n` : ""}  <meta name="theme-color" content="${BRAND.ink["950"]}">
+  <meta property="og:type" content="${escapeHtml(ogType)}">
   <meta property="og:site_name" content="${escapeHtml(BRAND.name)}">
   <meta property="og:url" content="${escapeHtml(pageUrl)}">
   <meta property="og:title" content="${escapeHtml(title)}">
@@ -332,11 +384,12 @@ function renderDocument({ title, description, rootPrefix, activeSection, bodyHtm
   <meta name="twitter:title" content="${escapeHtml(title)}">
   <meta name="twitter:description" content="${escapeHtml(description)}">
   <meta name="twitter:image" content="${escapeHtml(cardUrl)}">
+  <meta name="twitter:image:alt" content="${escapeHtml(cardAlt)}">
   <link rel="icon" type="image/svg+xml" href="${rootPrefix}assets/icon.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="${rootPrefix}assets/icon-192.png">
   <link rel="apple-touch-icon" href="${rootPrefix}assets/icon-192.png">
   <link rel="preload" href="${rootPrefix}assets/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="${rootPrefix}styles.css">
+  <link rel="stylesheet" href="${rootPrefix}styles.css">${jsonLdTag}
 </head>
 <body>
 ${renderHeader(rootPrefix, activeSection)}
@@ -878,13 +931,84 @@ function buildLandingPage() {
   </section>
 </main>`;
 
+  const landingDescription =
+    "OMP Pulse is a free, open-source mobile companion for Oh My Pi (omp). Drive desktop coding agent sessions from Android or iPhone, or run omp on Android.";
+
+  const structuredData = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": `${SITE_URL}#website`,
+        name: BRAND.name,
+        alternateName: ["omp-pulse", "Pulse for Oh My Pi"],
+        url: SITE_URL,
+        description: landingDescription,
+      },
+      {
+        "@type": ["SoftwareApplication", "SoftwareSourceCode"],
+        "@id": `${SITE_URL}#software`,
+        name: BRAND.name,
+        alternateName: ["omp-pulse", "Pulse for Oh My Pi"],
+        description: landingDescription,
+        applicationCategory: "DeveloperApplication",
+        operatingSystem: "Android, iOS, macOS, Linux, Windows",
+        softwareVersion: VERSION,
+        ...(RELEASE_DATE ? { dateModified: RELEASE_DATE } : {}),
+        url: SITE_URL,
+        codeRepository: REPO_URL,
+        downloadUrl: RELEASES_LATEST,
+        installUrl: `${SITE_URL}#setup`,
+        license: "https://opensource.org/licenses/MIT",
+        isAccessibleForFree: true,
+        image: SITE_URL + SOCIAL_CARD,
+        sameAs: [REPO_URL],
+        offers: {
+          "@type": "Offer",
+          price: "0",
+          priceCurrency: "USD",
+        },
+        author: {
+          "@type": "Person",
+          name: REPO_OWNER,
+          url: `https://github.com/${REPO_OWNER}`,
+        },
+        programmingLanguage: ["Rust", "TypeScript", "Java"],
+      },
+      {
+        "@type": "VideoObject",
+        "@id": `${SITE_URL}#film-video`,
+        name: "See OMP Pulse in 48 seconds",
+        description:
+          "48-second demo of OMP Pulse: desktop Oh My Pi (omp) synced live to your phone, notifications, one-tap questions, model and effort switching, git diffs, shell, usage meters, plugins, and standalone Android mode.",
+        thumbnailUrl: `${SITE_URL}assets/media/film-poster.jpg`,
+        contentUrl: `${SITE_URL}assets/media/film.mp4`,
+        embedUrl: `${SITE_URL}#film`,
+        duration: "PT48S",
+        ...(RELEASE_DATE ? { uploadDate: RELEASE_DATE } : {}),
+      },
+      {
+        "@type": "FAQPage",
+        "@id": `${SITE_URL}#faq-schema`,
+        mainEntity: faqItems.map(([question, answer]) => ({
+          "@type": "Question",
+          name: question,
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: stripInlineMarkdown(answer),
+          },
+        })),
+      },
+    ],
+  };
+
   return renderDocument({
-    title: "OMP Pulse: your coding agent, in your pocket",
-    description:
-      "Watch your coding agent work, answer its questions and check its changes from your phone, on Android or iPhone. Or run it on your Android phone with no computer at all. Free and open source.",
+    title: "OMP Pulse — Mobile Companion & Android App for Oh My Pi (omp)",
+    description: landingDescription,
     rootPrefix: "",
     activeSection: "home",
     bodyHtml,
+    structuredData,
   });
 }
 
@@ -971,6 +1095,35 @@ function buildDocPage(pageIndex) {
     </main>
   </div>`;
 
+  const pageUrl = canonicalUrl(page.slug);
+  const breadcrumbItems = [
+    { "@type": "ListItem", position: 1, name: BRAND.name, item: SITE_URL },
+    ...(page.slug === "docs/index.html"
+      ? [{ "@type": "ListItem", position: 2, name: "Documentation", item: pageUrl }]
+      : [
+          { "@type": "ListItem", position: 2, name: "Documentation", item: canonicalUrl("docs/index.html") },
+          { "@type": "ListItem", position: 3, name: page.title, item: pageUrl },
+        ]),
+  ];
+  const structuredData = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "TechArticle",
+        headline: `${page.title} — OMP Pulse Docs`,
+        description: page.description,
+        url: pageUrl,
+        ...(RELEASE_DATE ? { dateModified: RELEASE_DATE } : {}),
+        isPartOf: { "@id": `${SITE_URL}#website` },
+        about: { "@id": `${SITE_URL}#software` },
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: breadcrumbItems,
+      },
+    ],
+  };
+
   return renderDocument({
     title: `${page.title} — OMP Pulse Docs`,
     description: page.description,
@@ -978,7 +1131,56 @@ function buildDocPage(pageIndex) {
     activeSection: "docs",
     bodyHtml,
     slug: page.slug,
+    ogType: "article",
+    structuredData,
   });
+}
+
+// ── Crawler & AI Discovery Files ───────────────────────────────────────────
+
+function buildRobotsTxt() {
+  return `User-agent: *\nAllow: /\n\nSitemap: ${SITE_URL}sitemap.xml\n`;
+}
+
+function buildSitemapXml() {
+  const indexableSlugs = ["index.html", ...DOC_PAGES.map((p) => p.slug)];
+  const lastmodLine = RELEASE_DATE ? `\n    <lastmod>${escapeXml(RELEASE_DATE)}</lastmod>` : "";
+  const entries = indexableSlugs
+    .map((slug) => `  <url>\n    <loc>${escapeXml(canonicalUrl(slug))}</loc>${lastmodLine}\n  </url>`)
+    .join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries}\n</urlset>\n`;
+}
+
+function buildLlmsTxt() {
+  const docLines = DOC_PAGES.map(
+    (page) => `- [${page.title}](${canonicalUrl(page.slug)}): ${page.description}`,
+  ).join("\n");
+  return `# ${BRAND.name}
+
+> Free, open-source mobile companion and standalone Android runner for the Oh My Pi (omp) AI coding agent.
+
+- Website: ${SITE_URL}
+- GitHub repository: ${REPO_URL}
+- Latest release: ${RELEASES_LATEST}
+- Android APK: ${APK_DIRECT}
+- Current version: v${VERSION} (MIT licence)
+
+## What it does
+
+- Connects Android and iPhone (PWA) to desktop \`omp\` sessions on macOS, Linux and Windows with live streaming, syntax-highlighted diffs, one-tap questions, model/effort switching, plugins and Web Push notifications.
+- Runs \`omp\` natively on Android ("phone mode") inside a local Alpine workspace via \`proot\`, with no computer required.
+- Self-hosted single Rust binary with no cloud account or relay; pairs over Tailscale, Cloudflare Tunnel or LAN.
+
+## Install
+
+- macOS / Linux: \`curl -fsSL ${RAW_MAIN}/install.sh | sh\`
+- Windows (PowerShell): \`irm ${RAW_MAIN}/install.ps1 | iex\`
+- From source: \`cargo install --git ${REPO_URL} --locked\`
+
+## Documentation
+
+${docLines}
+`;
 }
 
 // ── Build Entrypoint ───────────────────────────────────────────────────────
@@ -1045,6 +1247,8 @@ export function buildSite(outDir = DIST) {
       description: "Page not found.",
       rootPrefix: "",
       activeSection: "",
+      slug: "404.html",
+      robots: "noindex, follow",
       bodyHtml: `<main id="main" class="container" style="padding:120px 24px;text-align:center">
         <p class="section-kicker">404</p>
         <h1 class="section-title">Page not found</h1>
@@ -1062,6 +1266,11 @@ export function buildSite(outDir = DIST) {
     const html = buildDocPage(idx);
     writeFileSync(join(outDir, DOC_PAGES[idx].slug), html);
   });
+
+  // Crawler & AI search discovery assets
+  writeFileSync(join(outDir, "robots.txt"), buildRobotsTxt());
+  writeFileSync(join(outDir, "sitemap.xml"), buildSitemapXml());
+  writeFileSync(join(outDir, "llms.txt"), buildLlmsTxt());
 
   return { outDir, pages: ["index.html", "404.html", ...DOC_PAGES.map((p) => p.slug)] };
 }
