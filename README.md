@@ -81,6 +81,12 @@ You need [omp](https://github.com/can1357/oh-my-pi) working first. The [Getting 
    curl -fsSL https://raw.githubusercontent.com/JulianCodespoti/omp-pulse/main/install.sh | sh
    ```
 
+   Homebrew (Mac or Linux):
+
+   ```sh
+   brew install juliancodespoti/tap/omp-pulse
+   ```
+
    Windows (PowerShell):
 
    ```powershell
@@ -106,7 +112,7 @@ You need [omp](https://github.com/can1357/oh-my-pi) working first. The [Getting 
 
 Android only, no computer needed: a 64-bit phone with Android 7 or newer and about 500 MB free.
 
-1. Install the [Android app](https://github.com/JulianCodespoti/omp-pulse/releases/latest/download/omp-pulse.apk).
+1. Install the [Android app](https://github.com/JulianCodespoti/omp-pulse/releases/latest/download/omp-pulse.apk) (or [add to Obtainium](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22com.omppulse.app%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FJulianCodespoti%2Fomp-pulse%22%2C%22author%22%3A%22JulianCodespoti%22%2C%22name%22%3A%22OMP%20Pulse%22%7D) for automatic updates).
 2. Tap **Run on this phone**.
 3. Sign in to your model provider and start a chat.
 

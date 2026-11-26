@@ -37,6 +37,10 @@ const SOCIAL_CARD = "assets/media/social-card.png";
 const RAW_MAIN = `https://raw.githubusercontent.com/${REPO_SLUG}/main`;
 const RELEASES_LATEST = `${REPO_URL}/releases/latest`;
 const APK_DIRECT = `${RELEASES_LATEST}/download/omp-pulse.apk`;
+const BREW_INSTALL = `brew install ${REPO_OWNER.toLowerCase()}/tap/${REPO_NAME}`;
+const OBTAINIUM_ADD_URL = `https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/${encodeURIComponent(
+  JSON.stringify({ id: "com.omppulse.app", url: REPO_URL, author: REPO_OWNER, name: "OMP Pulse" }),
+)}`;
 const changelogMd = readFileSync(join(ROOT, "CHANGELOG.md"), "utf8");
 const RELEASE_DATE =
   changelogMd.match(new RegExp(`^## \\[${VERSION.replaceAll(".", "\\.")}\\] - (\\d{4}-\\d{2}-\\d{2})`, "m"))?.[1] ??
@@ -760,6 +764,7 @@ function buildLandingPage() {
             <div class="install-box" aria-label="Install OMP Pulse on your computer">
               <div class="install-tabs" role="tablist" aria-label="Install platform">
                 <button class="install-tab" type="button" role="tab" aria-selected="true" data-install-tab data-prompt="$" data-cmd="${escapeHtml(unixInstall)}">Mac &amp; Linux</button>
+                <button class="install-tab" type="button" role="tab" aria-selected="false" data-install-tab data-prompt="$" data-cmd="${escapeHtml(BREW_INSTALL)}">Homebrew</button>
                 <button class="install-tab" type="button" role="tab" aria-selected="false" data-install-tab data-prompt="PS>" data-cmd="${escapeHtml(winInstall)}">Windows</button>
                 <button class="install-tab" type="button" role="tab" aria-selected="false" data-install-tab data-prompt="$" data-cmd="${escapeHtml(cargoInstall)}">From source</button>
               </div>
@@ -893,6 +898,7 @@ function buildLandingPage() {
           </div>
           <div class="download-links">
             <a class="btn btn-primary" href="${escapeHtml(APK_DIRECT)}">Download the Android app</a>
+            <a class="btn btn-secondary" href="${escapeHtml(OBTAINIUM_ADD_URL)}" target="_blank" rel="noopener noreferrer">Add to Obtainium</a>
           </div>
         </div>
 
@@ -1174,6 +1180,7 @@ function buildLlmsTxt() {
 ## Install
 
 - macOS / Linux: \`curl -fsSL ${RAW_MAIN}/install.sh | sh\`
+- Homebrew (macOS / Linux): \`${BREW_INSTALL}\`
 - Windows (PowerShell): \`irm ${RAW_MAIN}/install.ps1 | iex\`
 - From source: \`cargo install --git ${REPO_URL} --locked\`
 

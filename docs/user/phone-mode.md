@@ -70,7 +70,7 @@ starts the service again.
 
 Install the APK from the GitHub release (`omp-pulse-<version>-android-arm64.apk`,
 listed in `SHA256SUMS`; `omp-pulse.apk` always points at the newest), or track the
-releases with [Obtainium](https://github.com/ImranR98/Obtainium). Public releases are
+releases with [Obtainium](https://github.com/ImranR98/Obtainium) ([add OMP Pulse to Obtainium](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22com.omppulse.app%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FJulianCodespoti%2Fomp-pulse%22%2C%22author%22%3A%22JulianCodespoti%22%2C%22name%22%3A%22OMP%20Pulse%22%7D)). Public releases are
 signed with the same stable key, so updates install in place.
 
 The app is not on Google Play and is not designed to be: it downloads and runs code
